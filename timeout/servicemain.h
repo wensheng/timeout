@@ -9,8 +9,19 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QDir>
+#include <QUrl>
 #include <QDesktopWidget>
 #include <QStandardPaths>
+#include <QtNetwork/QNetworkRequest>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkAccessManager>
+#include <QHttpMultiPart>
+#include <QHttpPart>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <QDebug>
 
 #include "windows.h"
@@ -26,20 +37,32 @@ class ServiceMain : public QObject
 public:
     explicit ServiceMain(QObject *parent = nullptr);
 
+protected:
+    bool nativeEvent(const QByteArray &eventType, void *message, long *result);
+
 signals:
 
 public slots:
     void handleTimerEvent();
+    void sendData();
 
 private slots:
     void getForegroundProgramInfo();
 
 private:
+    void ServiceMain::uploadFile(const QFileInfo fi);
+    QNetworkAccessManager *netManager;
+    QSqlDatabase db;
     QTimer *minuteTimer;
-    //QTimer *hourTimer;
+    QTimer *hourTimer;
     QString lastApplicationName;
     QString appDataDir;
     QString lastWindowTitle;
+    uint lastUploadTime;
+    QString userName;
+    QString userId;
+    QString userHash;
+    QString userStatus;
 };
 
 #endif // SERVICEMAIN_H

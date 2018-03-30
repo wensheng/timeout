@@ -2,17 +2,17 @@
 
 ServiceMain::ServiceMain(QObject *parent) : QObject(parent)
 {
+    netManager = new QNetworkAccessManager;
     minuteTimer = new QTimer;
-    minuteTimer->setInterval(6000); //should be 60000
+    minuteTimer->setInterval(60000); //should be 60000
     connect(minuteTimer, SIGNAL(timeout()), this, SLOT(getForegroundProgramInfo()));
     minuteTimer->start();
 
-    /*
     //upload data every hour
-    QTimer *hourTimer = new QTimer(app);
+    hourTimer = new QTimer;
     hourTimer->setInterval(3600000);
     connect(hourTimer,SIGNAL(timeout()),this,SLOT(sendData()));
-    hourTimer->start();*/
+    hourTimer->start();
     qDebug() << "ServieMain initialized!";
 
 }
@@ -131,4 +131,106 @@ void ServiceMain::getForegroundProgramInfo(){
 
     lastWindowTitle = currentWindowTitle;
     lastApplicationName = currentApplicationName;
+}
+
+void ServiceMain::sendData()
+{
+    if(userName == "" || userId == "" || userHash == "" || userStatus != "ok"){
+        return;
+    }
+
+    if(lastUploadTime){
+        QUrl url("https://ieh.me/a/data/" + userId);
+        QNetworkRequest req(url);
+
+        QString sqlstr = QString("SELECT timestamp, name, title FROM entry where timestamp >%1").arg(lastUploadTime);
+        QSqlQuery query = QSqlQuery(sqlstr, db);
+        query.exec();
+        QJsonArray jsonArray;
+        while (query.next()){
+            QJsonObject jsonObj;
+            jsonObj.insert("time", query.value(0).toInt());
+            jsonObj.insert("name", query.value(1).toString());
+            jsonObj.insert("title", query.value(2).toString());
+            jsonArray.append(jsonObj);
+        }
+        QJsonObject data;
+        data["data"] = jsonArray;
+        QJsonDocument json;
+        json.setObject(data);
+
+        req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
+
+    //Sending the Request
+        netManager->post(req, json.toJson());
+    }
+    QDir dir(appDataDir);
+    dir.setFilter(QDir::Files|QDir::NoSymLinks);
+    const QFileInfoList fileInfoList = dir.entryInfoList();
+    foreach(const QFileInfo& fi, fileInfoList){
+        if((unsigned)fi.baseName().toInt() < lastUploadTime){
+            QFile::remove(fi.absoluteFilePath());
+        }else{
+            uploadFile(fi);
+        }
+    }
+    lastUploadTime = QDateTime::currentDateTime().toTime_t();
+}
+
+void ServiceMain::uploadFile(const QFileInfo fi){
+    QUrl testUrl("http://angzhou.com/tp/upload/" + userId);
+    QNetworkRequest request(testUrl);
+
+    QString fileName = fi.absoluteFilePath();
+    /*
+    QHttpMultiPart *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+    QHttpPart filePart;
+    filePart.setHeader(QNetworkRequest::ContentTypeHeader,    QVariant("image/jpeg"));
+    filePart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"upload\"; filename=\""+ fi.baseName() + "\""));
+    QFile *file = new QFile(fileName);
+    file->open(QIODevice::ReadOnly);
+    filePart.setBodyDevice(file);
+    file->setParent(multiPart);
+    multiPart->append(filePart);
+    netManager->post(request, multiPart);
+    */
+    QFile file(fileName);
+    if(!file.open(QIODevice::ReadOnly)){
+        return;
+    }
+    QString boundary = "------------whateverhahaha";
+    QByteArray datas(QString("--" + boundary + "\r\n").toLatin1());
+    datas += "Content-Disposition: form-data; name=\"upload\"; filename=\"";
+    datas += fi.baseName();
+    datas += "\"\r\nContent-Type: image/jpeg\r\n\r\n";
+    datas += file.readAll();
+    file.close();
+    datas += "\r\n";
+    datas += QString("--" + boundary + "\r\n").toLatin1();
+    datas += "Content-Disposition: form-data; name=\"upload\"\r\n\r\n";
+    datas += "Uploader\r\n";
+    datas += QString("--" + boundary + "--\r\n").toLatin1();
+
+    request.setRawHeader(QString("Content-Type").toLatin1(), QString("multipart/form-data; boundary=" + boundary).toLatin1());
+    request.setRawHeader(QString("Content-Length").toLatin1(), QString::number(datas.length()).toLatin1());
+    netManager->post(request,datas);
+}
+
+bool ServiceMain::nativeEvent(const QByteArray &eventType, void *message, long *result){
+    Q_UNUSED(eventType);
+    Q_UNUSED(result);
+    MSG *msg = static_cast<MSG*>(message);
+    switch(msg->message){
+    case WTS_SESSION_LOCK:
+        minuteTimer->stop();
+        hourTimer->stop();
+        break;
+    case WTS_SESSION_UNLOCK:
+        minuteTimer->start();
+        hourTimer->start();
+        break;
+    default:
+        break;
+    }
+    return false;
 }
