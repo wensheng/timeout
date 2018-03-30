@@ -13,6 +13,7 @@ ServiceMain::ServiceMain(QObject *parent) : QObject(parent)
     hourTimer->setInterval(3600000);
     connect(hourTimer,SIGNAL(timeout()),this,SLOT(sendData()));
     hourTimer->start();*/
+    qDebug() << "ServieMain initialized!";
 
 }
 
@@ -27,6 +28,7 @@ void ServiceMain::getForegroundProgramInfo(){
     QString currentWindowTitle=QString();
     QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QScreen *screen = QGuiApplication::primaryScreen();
+    qDebug() << "screenshoting...";
 
 
     //see: http://doc.qt.nokia.com/4.7/desktop-screenshot-screenshot-cpp.html
@@ -103,7 +105,7 @@ void ServiceMain::getForegroundProgramInfo(){
 
     //todo: should we use jpg?
     QString format = "jpg"; //png, jpg, bmp, can not do gif write
-    int img_quality = 5;  //default -1, 0:small compressed, 100:large uncompressed
+    int img_quality = 25;  //default -1, 0:small compressed, 100:large uncompressed
 
     /*
     //old debug stuff, don't delete

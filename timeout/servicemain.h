@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QDesktopWidget>
 #include <QStandardPaths>
+#include <QDebug>
 
 #include "windows.h"
 #include <tchar.h>
