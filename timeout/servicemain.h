@@ -15,10 +15,10 @@
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkAccessManager>
-#include <QHttpMultiPart>
-#include <QHttpPart>
-#include <QSqlDatabase>
-#include <QSqlQuery>
+#include <QtNetwork/QHttpMultiPart>
+#include <QtNetwork/QHttpPart>
+#include <QtSql/QSqlDatabase>
+#include <QtSql/QSqlQuery>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
@@ -50,7 +50,7 @@ private slots:
     void getForegroundProgramInfo();
 
 private:
-    void ServiceMain::uploadFile(const QFileInfo fi);
+    void uploadFile(const QFileInfo fi);
     QNetworkAccessManager *netManager;
     QSqlDatabase db;
     QTimer *minuteTimer;

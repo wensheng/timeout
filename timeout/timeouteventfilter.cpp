@@ -10,8 +10,8 @@ bool TimeoutEventFilter::nativeEventFilter(const QByteArray &eventType, void *me
     if(msg->message == WM_HOTKEY){
         // ... check HotKey
         if(msg->wParam == 100){
-            // We inform about this to the console
             qDebug() << "HotKey worked";
+            QProcess::startDetached("G:\\tmp\\sync2.exe");
             return true;
         }
     }

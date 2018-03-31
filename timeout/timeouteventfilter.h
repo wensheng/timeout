@@ -3,6 +3,7 @@
 
 #include <QAbstractNativeEventFilter>
 #include <QDebug>
+#include <QProcess>
 #include "windows.h"
 
 class TimeoutEventFilter: public QAbstractNativeEventFilter
