@@ -26,11 +26,11 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
         main.cpp \
         tmcontroller.cpp \
-    simplecrypt.cpp
+        ../common/simplecrypt.cpp
 
 HEADERS += \
         tmcontroller.h \
-    simplecrypt.h
+        ../common/simplecrypt.h
 
 FORMS += \
         tmcontroller.ui
