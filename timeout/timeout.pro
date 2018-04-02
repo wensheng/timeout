@@ -5,15 +5,13 @@ QT += core gui widgets network sql
 SOURCES = main.cpp \
     timeoutservice.cpp \
     servicemain.cpp \
-    timeouteventfilter.cpp \
-	../common/simplecrypt.cpp
-
-include(qtservice/qtservice.pri)
+    timeouteventfilter.cpp
 
 HEADERS += \
     timeoutservice.h \
     servicemain.h \
-    timeouteventfilter.h \
-	../common/simplecrypt.h
-
+    timeouteventfilter.h
+	
+include(qtservice/qtservice.pri)
+include(../common/common.pri)
 LIBS += -lpsapi

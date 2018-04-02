@@ -7,26 +7,30 @@ using namespace std;
 ofstream logfile;
 void SimpleLoggingHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
     switch (type) {
-           case QtDebugMsg:
-               logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Debug: " << msg.toLocal8Bit().constData() << "| in:" << context.file << " line:" << context.line << " func:" << context.function << "\n";
-               break;
-           case QtCriticalMsg:
-               logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Critical: " << context.file << context.line << context.function << "\n";
-               break;
-           case QtWarningMsg:
-               logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Warning: " << context.file << context.line << context.function << "\n";
-               break;
-           case QtFatalMsg:
-               logfile << QTime::currentTime().toString().toLocal8Bit().constData() <<  " Fatal: " << msg.toLocal8Bit().constData() << "\n";
-               abort();
+    case QtInfoMsg:
+        logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Info: " << msg.toLocal8Bit().constData() << "| in:" << context.file << context.line << context.function << "\n";
+        break;
+    case QtDebugMsg:
+        logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Debug: " << msg.toLocal8Bit().constData() << "| in:" << context.file << " line:" << context.line << " func:" << context.function << "\n";
+        break;
+    case QtCriticalMsg:
+        logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Critical: " << context.file << context.line << context.function << "\n";
+        break;
+    case QtWarningMsg:
+        logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Warning: " << context.file << context.line << context.function << "\n";
+        break;
+    case QtFatalMsg:
+        logfile << QTime::currentTime().toString().toLocal8Bit().constData() <<  " Fatal: " << msg.toLocal8Bit().constData() << "\n";
+        abort();
      }
+    logfile.flush();
 }
 
 TimeoutService::TimeoutService(int argc, char **argv)
-    : QtService<QApplication>(argc, argv, "Qt Interactive Service")
+    : QtService<QApplication>(argc, argv, "Time-Out Service")
 {
-    setServiceDescription("A Qt service with user interface.");
-    //setServiceFlags(QtServiceBase::CanBeSuspended);
+    setServiceDescription("Time-Out Service");
+    setServiceFlags(QtServiceBase::CanBeSuspended);
     wchar_t pszConsoleTitle[1024];
     wsprintf(pszConsoleTitle,L"%d/%d", GetTickCount(), GetCurrentProcessId());
     SetConsoleTitle(pszConsoleTitle);
@@ -48,12 +52,16 @@ TimeoutService::~TimeoutService()
 
 void TimeoutService::start()
 {
-    logfile.open("E:\\tmp\\logfile.txt", ios::app);
+    qApp->setQuitOnLastWindowClosed(false);
+    gui = new QLabel("t", 0, Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
+    gui->move(QApplication::desktop()->availableGeometry().bottomRight());
+    gui->show();
+    //QCoreApplication *app = application();
+    logfile.open("G:\\tmp\\logfile.txt", ofstream::app);
     qInstallMessageHandler(SimpleLoggingHandler);
 
     qDebug()<< "hello";
     TimeoutEventFilter *myfilter=new TimeoutEventFilter;
-    //QCoreApplication *app = application();
     //app->installNativeEventFilter(myfilter);
     QCoreApplication::instance()->installNativeEventFilter(myfilter);
     serviceMain = new ServiceMain();

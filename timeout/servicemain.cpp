@@ -1,10 +1,46 @@
 #include "servicemain.h"
+#include <fstream>
+#include "simplecrypt.h"
+using namespace std;
 
-ServiceMain::ServiceMain(QObject *parent) : QObject(parent)
+SimpleCrypt crypto(Q_UINT64_C(0xa0f1608c385c24a9));
+ServiceMain::ServiceMain(QObject *parent) :
+    QObject(parent),
+    sharedMemory("TimeoutSharedMemory")
 {
+    configIsOK = false;
     netManager = new QNetworkAccessManager;
+    DWORD pid = GetCurrentProcessId();
+    ofstream pidFile;
+    //TODO: use applicationdata
+    pidFile.open("G:\\tmp\\timeout.pid", ofstream::out);
+    pidFile << pid;
+    pidFile.close();
+
+    sharedMemory.create(sharedMemorySize);
+
+    /*
+       get from timeout.cfg
+       this file doesn't exist when Time-Out is first installed and started.
+       It is created by tmcontroller.exe, when user entered required information
+       after initial installationstartup/reboot, this file should already exists,
+       If we can read/decrypt from this file, email and apikey have already been
+       verified with the web server.
+       If we can't(either it doesn't exist or its content is invalid),
+       we keep reading from shared memory, when tmcontroller create this file, it will
+       write to shared memory
+     */
+    if(getConfigFromFile()){
+        qDebug() << "timeout.cfg exists and verified";
+        configIsOK = true;
+        // if verified, set configIsOK to true,
+        // config will be written to shared memory
+        //verifyWithWebServer();
+    }
+
+    connect(netManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(processWebServerReply(QNetworkReply*)));
     minuteTimer = new QTimer;
-    minuteTimer->setInterval(60000); //should be 60000
+    minuteTimer->setInterval(60000);
     connect(minuteTimer, SIGNAL(timeout()), this, SLOT(getForegroundProgramInfo()));
     minuteTimer->start();
 
@@ -22,7 +58,162 @@ void ServiceMain::handleTimerEvent()
     QtServiceBase::instance()->logMessage(QString("handleTimerEvent"), QtServiceBase::Information );
 }
 
+bool ServiceMain::getConfigFromFile(){
+    //TODO
+    //QString configFilePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QString configFilePath = "G:\\tmp";
+    configFilePath.append(QDir::separator()).append("timeout.cfg");
+    QFile configFile(configFilePath);
+    if(!configFile.exists()){
+        qDebug() << "timeout.cfg doesn't exist.";
+        return false;
+    }
+    configFile.open(QIODevice::ReadOnly);
+    QString val = configFile.readAll();
+    configFile.close();
+    QByteArray decrypted = crypto.decryptToByteArray(val);
+    if(crypto.lastError()){
+        return false;
+    }
+    QJsonDocument configJson = QJsonDocument::fromJson(decrypted);
+    QJsonObject configObj = configJson.object();
+    userEmail = configObj["Email"].toString();
+    userApiKey = configObj["ApiKey"].toString();
+    //userStatus = configObj["userStatus"].toString();
+    computerName = configObj["Computer"].toString();
+    return true;
+}
+
+void ServiceMain::verifyWithWebServer(){
+    QUrl url = QString("http://ieh.me/a/auth");
+    QNetworkRequest req(url);
+    QJsonDocument json;
+    QJsonObject data;
+    data["email"] = userEmail;
+    data["apikey"] = userApiKey;
+    json.setObject(data);
+    req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
+    //req.setHeader(QNetworkRequest::ContentLengthHeader, QByteArray::number(jsonPost.size()));
+    netManager->post(req, QJsonDocument(data).toJson());
+}
+
+void ServiceMain::processWebServerReply(QNetworkReply *serverReply){
+    if(serverReply->error() != QNetworkReply::NoError) {
+        qDebug() << "network reply error";
+        return;
+    }
+
+    QByteArray responseData = serverReply->readAll();
+    QJsonDocument json = QJsonDocument::fromJson(responseData);
+    QJsonObject jsonObj = json.object();
+    QString replyType = jsonObj["type"].toString();
+    if(replyType == "auth"){
+        QString result = jsonObj["result"].toString();
+        qDebug() << "Got auth result: " << result;
+        if(result == "ok"){
+            configIsOK = true;
+        }
+    }else if(replyType == "relogin"){
+        lastUploadTime = jsonObj["lastUploadTime"].toInt();
+        userEmail = jsonObj["userName"].toString();
+        userApiKey = jsonObj["userHash"].toString();
+        userStatus = jsonObj["userStatus"].toString();
+        /*
+        QFile configFile;
+        configFile.setFileName(configFilePath);
+        configFile.open(QIODevice::WriteOnly);
+        configFile.write(json.toJson());
+        configFile.close();
+        */
+    }else if(replyType == "upload"){
+        //QString fileName = QString("%1\\%2.jpg").arg(appDataDir).arg(jsonObj["file"].toString());
+        //if(QFileInfo::exists(fileName)){
+        //    QFile::remove(fileName);
+        //}
+    }
+    serverReply->deleteLater();
+}
+
+/* no longer used, we only read sharedmem here
+ * controller write to sharedmem
+bool ServiceMain::writeToSharedMemory(){
+    if(!sharedMemory.isAttached()){
+        sharedMemory.attach();
+    }
+
+    QMap<QString,QString> map;
+    map.insert("email", userEmail);
+    map.insert("apikey", userApiKey);
+    map.insert("computer", computerName);
+    if(configIsOK){
+        map.insert("verified", "true");
+    }else{
+        map.insert("verified", "false");
+    }
+    QBuffer buffer;
+    buffer.open(QBuffer::WriteOnly);
+    QDataStream datastream(&buffer);
+    datastream.setVersion(QDataStream::Qt_5_10);
+    datastream << map;
+
+    if(buffer.size()>sharedMemorySize){
+        qDebug() << "Shared mem too small! This is impossible!";
+        return false;
+    }
+    int size = buffer.size();
+
+    sharedMemory.lock();
+    char *writeTo = (char*)sharedMemory.data();
+    const char *writeFrom = buffer.data().data();
+    memcpy(writeTo, writeFrom, buffer.size());
+    sharedMemory.unlock();
+    return true;
+}
+*/
+
+//QMap<QString, QString> ServiceMain::readFromSharedMemory()
+QString ServiceMain::readFromSharedMemory(){
+    if(!sharedMemory.isAttached()){
+        sharedMemory.attach();
+    }
+
+    //don't use qmap, just qstring for status
+    //QMap<QString,QString> map;
+    QString status;
+    QBuffer buffer;
+    QDataStream datastream(&buffer);
+    sharedMemory.lock();
+    buffer.setData((char*)sharedMemory.constData(), sharedMemory.size());
+    buffer.open(QBuffer::ReadOnly);
+    //datastream >> map;
+    datastream >> status;
+    sharedMemory.unlock();
+    //return map;
+    return status;
+}
+
+bool ServiceMain::getConfigFromSharedMem(){
+
+    return true;
+}
+
 void ServiceMain::getForegroundProgramInfo(){
+    //QMap<QString,QString> map = readFromSharedMemory();
+
+    if(!configIsOK){
+        QString status = readFromSharedMemory();
+        if(status.isEmpty()){
+            return;
+        }else if(status == "ready"){
+            sharedMemory.detach();
+            qDebug() << "config file is ready, let's read it";
+            if(getConfigFromFile()){
+                configIsOK = true;
+            }else{
+                return;
+            }
+        }
+    }
     QDateTime currentTime = QDateTime::currentDateTime();
     QString currentApplicationName=QString();
     QString currentWindowTitle=QString();
@@ -135,12 +326,12 @@ void ServiceMain::getForegroundProgramInfo(){
 
 void ServiceMain::sendData()
 {
-    if(userName == "" || userId == "" || userHash == "" || userStatus != "ok"){
+    if(!configIsOK){
         return;
     }
 
     if(lastUploadTime){
-        QUrl url("https://ieh.me/a/data/" + userId);
+        QUrl url("https://ieh.me/a/data/" + userEmail);
         QNetworkRequest req(url);
 
         QString sqlstr = QString("SELECT timestamp, name, title FROM entry where timestamp >%1").arg(lastUploadTime);
@@ -178,7 +369,7 @@ void ServiceMain::sendData()
 }
 
 void ServiceMain::uploadFile(const QFileInfo fi){
-    QUrl testUrl("http://angzhou.com/tp/upload/" + userId);
+    QUrl testUrl("http://angzhou.com/tp/upload/" + userEmail);
     QNetworkRequest request(testUrl);
 
     QString fileName = fi.absoluteFilePath();

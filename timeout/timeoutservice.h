@@ -26,6 +26,7 @@ protected:
     void processCommand(int code);
 
 private:
+    QLabel *gui;
     ServiceMain *serviceMain;
     HWND hwndFound;
 

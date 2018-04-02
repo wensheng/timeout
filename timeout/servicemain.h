@@ -22,6 +22,10 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QSharedMemory>
+#include <QMap>
+#include <QBuffer>
+#include <QDataStream>
 #include <QDebug>
 
 #include "windows.h"
@@ -48,9 +52,17 @@ public slots:
 
 private slots:
     void getForegroundProgramInfo();
+    void processWebServerReply(QNetworkReply *serverReply);
 
 private:
     void uploadFile(const QFileInfo fi);
+    bool getConfigFromSharedMem();
+    bool getConfigFromFile();
+    void verifyWithWebServer();
+    //bool writeToSharedMemory();
+    //QMap<QString, QString> readFromSharedMemory();
+    QString readFromSharedMemory();
+    bool configIsOK;
     QNetworkAccessManager *netManager;
     QSqlDatabase db;
     QTimer *minuteTimer;
@@ -59,10 +71,12 @@ private:
     QString appDataDir;
     QString lastWindowTitle;
     uint lastUploadTime;
-    QString userName;
-    QString userId;
-    QString userHash;
+    QString userEmail = "";
+    QString userApiKey = "";
+    QString computerName = "";
     QString userStatus;
+    QSharedMemory sharedMemory;
+    const int sharedMemorySize = 8192;
 };
 
 #endif // SERVICEMAIN_H
