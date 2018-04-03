@@ -10,9 +10,11 @@
 #include "timepie.h"
 #include "ui_dialog.h"
 #include "timepieeventfilter.h"
+#include "simplecrypt.h"
 
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
+SimpleCrypt crypto(Q_UINT64_C(0xa0f1608c385c24a9));
 
 //! [0]
 TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
@@ -24,6 +26,19 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     timepie_logfile.open(QDir::toNativeSeparators(logpath).toStdString().c_str(), std::ios::app);
     //qInstallMessageHandler(TimepieLoggingHandler);
 #endif
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString cLetter = env.value("SystemDrive");
+    if(cLetter.isEmpty()){
+        cLetter = "C:";
+    }
+    progDataDir = QString("%1\\ProgramData\\TimePie").arg(cLetter);
+    qDebug() << "progDataDir: " << progDataDir;
+
+    configFilePath = QString(progDataDir);
+    configFilePath.append(QDir::separator()).append("timeout.cfg");
+
+    configIsOK = false;
     //installEventFilter(this);
     wchar_t pszConsoleTitle[1024];
     wsprintf(pszConsoleTitle,L"%d/%d", GetTickCount(), GetCurrentProcessId());
@@ -42,8 +57,18 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     lastWindowTitle = QString();
     netManager = new QNetworkAccessManager;
 
-
     ui->setupUi(this);
+    ui->confirmedLabel->hide();
+    if(getConfigFromFile()){
+        ui->emailEdit->setText(userEmail);
+        ui->apikeyEdit->setText(userApiKey);
+        ui->computernameEdit->setText(computerName);
+        configIsOK = true;
+        authWithWebServer();
+    }else{
+        ui->computernameEdit->setText(QHostInfo::localHostName());
+        ui->isrunningLabel->setText("Please enter your email and API key");
+    }
 
     createTrayIcon();
     trayIcon->show();
@@ -63,14 +88,13 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     connect(fswatcher,SIGNAL(fileChanged(QString)),this,SLOT(show()));
 
     //connect(loginButton, SIGNAL(released()), this, SLOT(login()));
-    connect(netManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(replyFinished(QNetworkReply*)));
+    connect(netManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(processWebServerReply(QNetworkReply*)));
     //start the web server
     //When this program is shutdown, we want the webserver be shutdown too.
     //so we can't use QProcess::startDetached
     //QProcess::execute("webserver.exe");
 
-    //initData();
-    //show();
+    initData();
 
     //try to take a screenshot every minute
     minuteTimer = new QTimer();
@@ -80,7 +104,7 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     
     //upload data every hour
     hourTimer = new QTimer();
-    hourTimer->setInterval(3600000);
+    hourTimer->setInterval(36000);
     connect(hourTimer,SIGNAL(timeout()),this,SLOT(sendData()));
     hourTimer->start();
     
@@ -92,53 +116,16 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
 
 void TimePie::initData()
 {
+
+    //we don't use appdata because we want different users write to same db and screenshots dir
+    //appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    
+    QString dbPath(progDataDir);
+    dbPath.append("\\timepie.db");
     //connect to sqlite db "timepie.db" in the installation directory
-	//create table `entry` if not already exists
+    //create table `entry` if not already exists
     db = QSqlDatabase::addDatabase("QSQLITE");
-    //will be %appdata%\TimePie
-    //%appdata% will be mostly likely be roaming
-    appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    
-    QDir dir(appDataDir);
-    if(!dir.exists()){
-        dir.mkpath(".");
-    }
-    
-    configFilePath = QString(appDataDir);
-    configFilePath.append(QDir::separator()).append("config.json");
-    
-    QFile configFile;
-    configFile.setFileName(configFilePath);
-    if(configFile.exists()){
-        configFile.open(QIODevice::ReadOnly);
-        QString val = configFile.readAll();
-        QJsonDocument configJson = QJsonDocument::fromJson(val.toUtf8());
-        QJsonObject configObj = configJson.object();
-        lastUploadTime = configObj["lastUploadTime"].toInt();
-        userName = configObj["userName"].toString();
-        userHash = configObj["userHash"].toString();
-        userId = configObj["userId"].toString();        
-        userStatus = configObj["userStatus"].toString();
-    }else{
-        configFile.open(QIODevice::WriteOnly);
-        QTextStream outStream(&configFile);
-        lastUploadTime = 0;
-        userName = "";
-        userHash = "";
-        userId = "";
-        userStatus = "";
-        outStream << "{\"lastUploadTime\":0,\"userName\":\"\",\"userId\":\"\",\"userHash\":\"\",\"userStatus\":\"\"}";
-    }
-    configFile.close();
-    
-    if(userHash != "" && userId != ""){
-        reLogin();
-    }
-    
-    QString path(appDataDir);
-    path.append(QDir::separator()).append("timepie.db");
-    path = QDir::toNativeSeparators(path);
-    db.setDatabaseName(path);
+    db.setDatabaseName(dbPath);
 	if(db.open()==false){
 		QMessageBox::critical(0, QObject::tr("Systray"),
                               QObject::tr("Could not open database"));
@@ -148,9 +135,11 @@ void TimePie::initData()
 		query.exec();
 	}
 	qDebug()<< db.tables();
+    db.close();
 
-    appDataDir.append(QDir::separator()).append("data");
-    dir = QDir(appDataDir);
+    QString shotsDir(progDataDir);
+    shotsDir.append("\\shots");
+    QDir dir = QDir(shotsDir);
     if(!dir.exists()){
         dir.mkpath(".");
     }
@@ -218,6 +207,7 @@ void TimePie::createTrayIcon()
     trayIcon->setToolTip("Enhanced Sound");
 }
 
+/*
 void TimePie::login(){
     QUrl url = QString("http://angzhou.com/tp/login");
     QNetworkRequest req(url);
@@ -255,12 +245,14 @@ void TimePie::reLogin(){
 
     netManager->post(req, jsonPost);
 }
+*/
 
-void TimePie::replyFinished(QNetworkReply *serverReply)
+void TimePie::processWebServerReply(QNetworkReply *serverReply)
 {
     if(serverReply->error() != QNetworkReply::NoError)
     {
-        statusLabel->setText(QString::fromLocal8Bit("network error"));
+        ui->isrunningLabel->setText("network error");
+        qDebug() << "network error";
         return;
     }
 
@@ -268,24 +260,24 @@ void TimePie::replyFinished(QNetworkReply *serverReply)
     QJsonDocument json = QJsonDocument::fromJson(responseData);
     QJsonObject jsonObj = json.object();
     QString replyType = jsonObj["type"].toString();
-    if(replyType == "login" || replyType == "relogin"){
-        lastUploadTime = jsonObj["lastUploadTime"].toInt();
-        userName = jsonObj["userName"].toString();
-        userHash = jsonObj["userHash"].toString();
-        userId = jsonObj["userId"].toString();
-        userStatus = jsonObj["userStatus"].toString();
-        QFile configFile;
-        configFile.setFileName(configFilePath);
-        configFile.open(QIODevice::WriteOnly);
-        configFile.write(json.toJson());
-        configFile.close();
-        
-        loginWidget->hide();
-        midWidget->show();
-    }else if(replyType == "relogin"){
-        loginWidget->hide();
-        midWidget->show();        
+    if(replyType == "auth"){
+        QString result = jsonObj["result"].toString();
+        qDebug() << "Got auth result: " << result;
+        if(result == "ok"){
+            if(!configIsOK){
+                saveConfigFile();
+            }
+            userId = jsonObj["userId"].toInt();
+            userStatus = jsonObj["userStatus"].toInt();
+            lastUploadTime = jsonObj["lastUploadTime"].toInt();
+            qDebug() << "userId:" << userId << " status:" << userStatus;
+            //writeToSharedMemory();
+            //configIsOK = true;
+        }
+    }else if(replyType == "data"){
+        qDebug() << jsonObj["result"].toString();
     }else if(replyType == "upload"){
+        qDebug() << jsonObj["file"] << " saved on remote server.";
         //QString fileName = QString("%1\\%2.jpg").arg(appDataDir).arg(jsonObj["file"].toString());
         //if(QFileInfo::exists(fileName)){
         //    QFile::remove(fileName);
@@ -293,7 +285,21 @@ void TimePie::replyFinished(QNetworkReply *serverReply)
     }
     serverReply->deleteLater();
 }
-
+void TimePie::saveConfigFile(){
+    QFile configFile(configFilePath);
+    QJsonObject jsonObj;
+    jsonObj.insert("Email", QJsonValue::fromVariant(userEmail));
+    jsonObj.insert("ApiKey", QJsonValue::fromVariant(userApiKey));
+    jsonObj.insert("Computer", QJsonValue::fromVariant(computerName));
+    QJsonDocument json(jsonObj);
+    configFile.open(QIODevice::WriteOnly);
+    QTextStream outStream(&configFile);
+    outStream << crypto.encryptToString(json.toJson());
+    configFile.close();
+    configIsOK = true;
+    ui->confirmedLabel->show();
+    qDebug() << "config file:" << configFilePath << " saved.";
+}
 void TimePie::openWebBrowser()
 {
     QDesktopServices::openUrl(QUrl("https://angzhou.com/naerqule", QUrl::StrictMode));
@@ -306,24 +312,22 @@ void TimePie::openHelpBrowser()
 
 void TimePie::shootScreen()
 {
+    if(!configIsOK){
+        return;
+    }
     QDateTime currentTime = QDateTime::currentDateTime();
     QString currentApplicationName=QString();
     QString currentWindowTitle=QString();
-	int newId;
+    QString screenshotPath = QString(progDataDir);
+    screenshotPath.append("\\shots");
+    QScreen *screen = QGuiApplication::primaryScreen();
 
     //see: http://doc.qt.nokia.com/4.7/desktop-screenshot-screenshot-cpp.html
     QPixmap originalPixmap = QPixmap(); // clear image for low memory situations on embedded devices.
 
-#ifdef Q_OS_WIN
     HWND iHwndForegroundWindow = GetForegroundWindow();
 
-    if(!iHwndForegroundWindow){
-        //this will shoot whole desktop,
-        //if multi-headed, will shoot the desktop that has foreground window
-        originalPixmap = QPixmap::grabWindow(QApplication::desktop()->winId());
-        currentApplicationName = QString("None");
-        currentWindowTitle = QString();
-    }else{
+    if(iHwndForegroundWindow){
         //Get active window title,
         //if active window is a browser, it will be html doc title
         LPTSTR appTitle = new TCHAR[1023];
@@ -331,7 +335,7 @@ void TimePie::shootScreen()
         if(appTitle!=NULL){
             currentWindowTitle = QString::fromUtf16( (ushort*)appTitle );
 		}
-		qDebug()<<"title:"<<currentWindowTitle.toUtf8().data();
+        //qDebug()<<"title:"<<currentWindowTitle.toUtf8().data();
 
         //Get active window application filename
         //e.g. if active window is firefox, it will be "firefox.exe"
@@ -348,10 +352,11 @@ void TimePie::shootScreen()
             }
         }
         CloseHandle(handle);
-		qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
+        delete[] appName;
+        //qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
 
         if(currentApplicationName!=lastApplicationName || currentWindowTitle!=lastWindowTitle){
-            if(db.isOpen()){
+            if(db.open()){
 				QString sqlstr = QString("insert into entry values('%1','%2','%3',%4)")
                                  .arg(currentTime.toTime_t())
                                  .arg(currentApplicationName)
@@ -361,13 +366,13 @@ void TimePie::shootScreen()
 
 				QSqlQuery query = QSqlQuery(db);
 				bool ret = query.exec(sqlstr);
-				//qDebug()<<query.lastError().text();
 
                 if (ret){
-                    newId = query.lastInsertId().toInt();
+                    //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
 				}else{
 					qDebug()<<"insert failed\n";
 				}
+                db.close();
             }
 
             LPRECT lpRect=new RECT();
@@ -377,38 +382,20 @@ void TimePie::shootScreen()
                 y = lpRect->top;
                 w = lpRect->right - lpRect->left + 1;
                 h = lpRect->bottom - lpRect->top + 1;
-                originalPixmap = QPixmap::grabWindow(QApplication::desktop()->winId(),
+                originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
                                                  x,y,w,h);
             }else{
                 //This works, but it only grab the pane, not window,
                 //i.e. no outer frame, not menu, status.
-                originalPixmap = QPixmap::grabWindow((WId)iHwndForegroundWindow);
+                originalPixmap = screen->grabWindow((WId)iHwndForegroundWindow);
             }
         }
     }
-#else
-
-	//These code actually works on windows too
-    WId iHwndForegroundWindow = 0;
-
-    if(!QApplication::activeWindow()){
-        iHwndForegroundWindow = QApplication::activeWindow()->winId();
-    }
-
-    if(!iHwndForegroundWindow){
-        originalPixmap = QPixmap::grabWindow(QApplication::desktop()->winId());
-    }else{
-        originalPixmap = QPixmap::grabWindow(iHwndForegroundWindow);
-        //the diff between activeWindow and focusWidget:
-        //There might be an activeWindow() even if there is no focusWidget(),
-        //for example if no widget in that window accepts key events.
-    }
-#endif
 
 
 	//todo: should we use jpg?
     QString format = "jpg"; //png, jpg, bmp, can not do gif write
-	int img_quality = 5;  //default -1, 0:small compressed, 100:large uncompressed
+    int img_quality = 25;  //default -1, 0:small compressed, 100:large uncompressed
 
     /*
 	//old debug stuff, don't delete
@@ -420,12 +407,12 @@ void TimePie::shootScreen()
                                             .arg(format));
     */
     //QString fileName = QString("%1/%2.%3").arg(appDataDir).arg(currentTime.currentMSecsSinceEpoch()).arg(format);
-    QString fileName = QString("%1/%2.%3").arg(appDataDir).arg(currentTime.toTime_t()).arg(format);
-    fileName = QDir::toNativeSeparators(fileName);
+
+    QString fileName = QString("%1\\%2.%3").arg(screenshotPath).arg(currentTime.toTime_t()).arg(format);
 
 	//todo: sometimes have null pixmap, investigate
-    if (!fileName.isEmpty() && !originalPixmap.isNull()){
-		//save original size
+    if (!originalPixmap.isNull()){
+        //save original size
         originalPixmap.save(fileName, format.toStdString().c_str(), img_quality);
 		//save half size
 		//originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
@@ -437,36 +424,44 @@ void TimePie::shootScreen()
 
 void TimePie::sendData()
 {
-    if(userName == "" || userId == "" || userHash == "" || userStatus != "ok"){
+    if(configIsOK == false || lastUploadTime == 0){
         return;
     }
 
-    if(lastUploadTime){
-        QUrl url("http://angzhou.com/tp/data/" + userId);
-        QNetworkRequest req(url);
-        
-        QString sqlstr = QString("SELECT timestamp, name, title FROM entry where timestamp >%1").arg(lastUploadTime);
-        QSqlQuery query = QSqlQuery(sqlstr, db);
-        query.exec();
-        QJsonArray jsonArray;
-        while (query.next()){
-            QJsonObject jsonObj;
-            jsonObj.insert("time", query.value(0).toInt());
-            jsonObj.insert("name", query.value(1).toString());
-            jsonObj.insert("title", query.value(2).toString());
-            jsonArray.append(jsonObj);
-        }
-        QJsonObject data;
-        data["data"] = jsonArray;
-        QJsonDocument json;
-        json.setObject(data);
-    
-        req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
+
+    QString sqlstr = QString("SELECT timestamp, name, title FROM entry where timestamp >%1").arg(lastUploadTime);
+    if(!db.open()){
+        return;
+    }
+    QSqlQuery query = QSqlQuery(sqlstr, db);
+    query.exec();
+    QJsonArray jsonArray;
+    while (query.next()){
+        QJsonObject jsonObj;
+        jsonObj.insert("time", query.value(0).toInt());
+        jsonObj.insert("name", query.value(1).toString());
+        jsonObj.insert("title", query.value(2).toString());
+        jsonArray.append(jsonObj);
+    }
+    db.close();
+
+    QJsonObject data;
+    data["data"] = jsonArray;
+    data["email"] = userEmail;
+    data["apikey"] = userApiKey;
+    int currentUploadTime = QDateTime::currentDateTime().toTime_t();
+    data["last"] = currentUploadTime;
+    QJsonDocument json;
+    json.setObject(data);
+
+    QUrl url("http://ieh.me/a/data");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
     
     //Sending the Request
-        netManager->post(req, json.toJson());
-    }
-    QDir dir(appDataDir);
+    netManager->post(req, json.toJson());
+
+    QDir dir(progDataDir + "\\shots");
     dir.setFilter(QDir::Files|QDir::NoSymLinks);
     const QFileInfoList fileInfoList = dir.entryInfoList();
     foreach(const QFileInfo& fi, fileInfoList){
@@ -476,11 +471,12 @@ void TimePie::sendData()
             uploadFile(fi);
         }
     }
-    lastUploadTime = QDateTime::currentDateTime().toTime_t();
+    lastUploadTime = currentUploadTime;
 }
 
 void TimePie::uploadFile(const QFileInfo fi){
-    QUrl testUrl("http://angzhou.com/tp/upload/" + userId);
+    QString uploadAddress = QString("http://ieh.me/a/upload/%1").arg(userId);
+    QUrl testUrl(uploadAddress);
     QNetworkRequest request(testUrl);
     
     QString fileName = fi.absoluteFilePath();
@@ -571,13 +567,14 @@ bool TimePie::nativeEvent(const QByteArray &eventType, void *message, long *resu
         minuteTimer->start();
         hourTimer->start();
         break;
+        /*
     case WM_HOTKEY:
         if(msg->wParam == 100){
             qDebug() << "HotKey worked!!";
             //QProcess::startDetached("G:\\tmp\\sync2.exe");
             //        return true;
         }
-        break;
+        break;*/
     default:
         break;
     }
@@ -601,7 +598,60 @@ bool TimePie::eventFilter(QObject* obj, QEvent* event)
     return false;
 }*/
 
+bool TimePie::getConfigFromFile(){
+    //TODO
+    QFile configFile(configFilePath);
+    if(!configFile.exists()){
+        qDebug() << "timeout.cfg doesn't exist.";
+        return false;
+    }
+    configFile.open(QIODevice::ReadOnly);
+    QString val = configFile.readAll();
+    configFile.close();
+    QByteArray decrypted = crypto.decryptToByteArray(val);
+    if(crypto.lastError()){
+        return false;
+    }
+    QJsonDocument configJson = QJsonDocument::fromJson(decrypted);
+    QJsonObject configObj = configJson.object();
+    userEmail = configObj["Email"].toString();
+    userApiKey = configObj["ApiKey"].toString();
+    //userStatus = configObj["userStatus"].toString();
+    computerName = configObj["Computer"].toString();
+    return true;
+}
+
 void TimePie::on_confirmButton_clicked()
 {
-    qDebug() << "confirm clicked";
+    userEmail = ui->emailEdit->text();
+    userApiKey = ui->apikeyEdit->text();
+    computerName = ui->computernameEdit->text();
+
+    authWithWebServer();
+}
+
+void TimePie::authWithWebServer(){
+    QUrl url = QString("http://ieh.me/a/auth");
+    QNetworkRequest req(url);
+    QJsonDocument json;
+    QJsonObject data;
+    data["email"] = userEmail;
+    data["apikey"] = userApiKey;
+    json.setObject(data);
+    req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
+    //req.setHeader(QNetworkRequest::ContentLengthHeader, QByteArray::number(jsonPost.size()));
+    netManager->post(req, QJsonDocument(data).toJson());
+}
+
+/*
+void TimePie::on_runButton_clicked()
+{
+    ui->isrunningLabel->setText("Time-Out is running.");
+        ui->isrunningLabel->setStyleSheet("QLabel { color : green; }");
+        ui->runButton->hide();
+}*/
+
+void TimePie::on_closeButton_clicked()
+{
+    hide();
 }

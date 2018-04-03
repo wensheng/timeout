@@ -231,27 +231,6 @@
     <string>Time-Out running status</string>
    </property>
   </widget>
-  <widget class="QPushButton" name="runButton">
-   <property name="geometry">
-    <rect>
-     <x>320</x>
-     <y>380</y>
-     <width>151</width>
-     <height>41</height>
-    </rect>
-   </property>
-   <property name="font">
-    <font>
-     <family>Tahoma</family>
-     <pointsize>8</pointsize>
-     <weight>50</weight>
-     <bold>false</bold>
-    </font>
-   </property>
-   <property name="text">
-    <string>Run Time-Out</string>
-   </property>
-  </widget>
   <widget class="QLabel" name="confirmedLabel">
    <property name="enabled">
     <bool>true</bool>
@@ -274,7 +253,7 @@
     <string>✓</string>
    </property>
   </widget>
-  <widget class="QWidget" name="">
+  <widget class="QWidget" name="layoutWidget">
    <property name="geometry">
     <rect>
      <x>20</x>

@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QtGui>
 #include <QStandardPaths>
+#include <QByteArray>
 #include <fstream>
 #include <QSystemTrayIcon>
 #include <QFileInfo>
@@ -37,10 +38,13 @@
 #include <QDesktopWidget>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QPixmap>
 #include <QTime>
 #include <QDateTime>
+#include <QHostInfo>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QFileSystemWatcher>
 #include <QNetworkRequest>
 #include <QNetworkReply>
@@ -93,45 +97,22 @@ private slots:
     void shootScreen();
     void sendData();
     void uploadFile(const QFileInfo fi);
-    void replyFinished(QNetworkReply *serverReply);
-    void login();
-    void reLogin();
+    void processWebServerReply(QNetworkReply *serverReply);
 
     void on_confirmButton_clicked();
+    void on_closeButton_clicked();
 
 private:
     void createIconGroupBox();
     void createMessageGroupBox();
     void createTrayIcon();
+    void saveConfigFile();
+    bool getConfigFromFile();
+    void authWithWebServer();
 
     Ui::TMController *ui;
     HWND hwndFound;
-    QGroupBox *iconGroupBox;
-    QLabel *iconLabel;
-    QComboBox *iconComboBox;
-    QCheckBox *showIconCheckBox;
-    QWidget *loginWidget;
-    //QWidget *midWidget;
-    QLabel *midWidget;
     QNetworkAccessManager *netManager;
-
-    QGroupBox *messageGroupBox;
-    QLabel *typeLabel;
-    QLineEdit *nameInput;
-    QLineEdit *pwInput;
-    QLabel *durationLabel;
-    QLabel *durationWarningLabel;
-    QLabel *statusLabel;
-    QLabel *titleLabel;
-    QComboBox *typeComboBox;
-    QSpinBox *durationSpinBox;
-    QLineEdit *titleEdit;
-    QPushButton *showMessageButton;
-
-    QAction *minimizeAction;
-    QAction *maximizeAction;
-    QAction *restoreAction;
-    QAction *quitAction;
 
     QSystemTrayIcon *trayIcon;
     QMenu *trayIconMenu;
@@ -140,17 +121,20 @@ private:
     QSqlDatabase db;
     QString lastApplicationName;
     QString appDataDir;
+    QString progDataDir;
     QString lastWindowTitle;
     uint lastUploadTime;
-    QString userName;
-    QString userId;
-    QString userHash;
-    QString userStatus;
+    QString userEmail;
+    QString userApiKey;
+    QString computerName;
+    unsigned int userId;
+    int userStatus;
     QString configFilePath;
     QTimer *minuteTimer;
     QTimer *hourTimer;
     HWND *thisHwnd;
     bool notActive;
+    bool configIsOK;
 };
 
 //! [0]
