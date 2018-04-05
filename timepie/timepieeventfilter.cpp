@@ -14,7 +14,10 @@ bool TimePieEventFilter::nativeEventFilter(const QByteArray &eventType, void *me
         // ... check HotKey
         if(msg->wParam == 100){
             //qDebug() << "HotKey worked";
+            target->setWindowState( (target->windowState() & ~Qt::WindowMinimized) |
+                                    Qt::WindowActive);
             target->show();
+            //target->activateWindow();
             return true;
         }
     }

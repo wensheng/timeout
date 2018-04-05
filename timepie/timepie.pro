@@ -10,7 +10,7 @@ HEADERS += timepie.h \
 RESOURCES = timepie.qrc
 
 include(../common/common.pri)
-LIBS += -lpsapi	-lWtsApi32 -luser32
+LIBS += -lpsapi	-lWtsApi32 -lAdvapi32 -luser32
 
 # install
 target.path = desktop

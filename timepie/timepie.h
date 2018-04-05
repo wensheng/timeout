@@ -10,11 +10,6 @@
 #ifndef TIMEPIE_H
 #define TIMEPIE_H
 
-#ifdef _DEBUG
-#else
-#define QT_NO_DEBUG_OUTPUT
-#endif
-
 #include <QApplication>
 #include <QtGui>
 #include <QStandardPaths>
@@ -25,18 +20,8 @@
 #include <QMessageBox>
 #include <QDialog>
 #include <QtDebug>
-#include <QComboBox>
-#include <QSpinBox>
-#include <QLabel>
-#include <QTextEdit>
-#include <QLineEdit>
-#include <QPushButton>
-#include <QHBoxLayout>
-#include <QCheckBox>
-#include <QGroupBox>
 #include <QMenu>
 #include <QDesktopWidget>
-#include <QDesktopServices>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QPixmap>
@@ -60,21 +45,8 @@
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
 
 namespace Ui {
-class TMController;
+    class TMController;
 }
-/*class QAction;
-class QCheckBox;
-class QComboBox;
-class QGroupBox;
-class QLabel;
-class QLineEdit;
-class QMenu;
-class QPushButton;
-class QSpinBox;
-class QTextEdit;
-class QDateTime;
-class QMessageBox;*/
-
 
 //! [0]
 class TimePie : public QDialog
@@ -92,7 +64,6 @@ protected:
 private slots:
     void initData();
     void iconActivated(QSystemTrayIcon::ActivationReason reason);
-    void openWebBrowser();
     void openHelpBrowser();
     void shootScreen();
     void sendData();

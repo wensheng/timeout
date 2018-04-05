@@ -1,6 +1,7 @@
 #include "timeoutservice.h"
 #include "timeouteventfilter.h"
 #include <QtGlobal>
+/*
 #include <fstream>
 
 using namespace std;
@@ -25,10 +26,23 @@ void SimpleLoggingHandler(QtMsgType type, const QMessageLogContext &context, con
      }
     logfile.flush();
 }
+*/
 
 TimeoutService::TimeoutService(int argc, char **argv)
     : QtService<QApplication>(argc, argv, "iehmonitor Service")
 {
+    /*
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString cLetter = env.value("SystemDrive");
+    if(cLetter.isEmpty()){
+        cLetter = "C:";
+    }
+    QString logPath = QString("%1\\ProgramData\\TimePie\\tm_monitor_service.log").arg(cLetter);
+    wchar_t *logPath_w = new wchar_t[logPath.length() + 1];
+    logfile.open(logPath_w, ofstream::app);
+    qInstallMessageHandler(SimpleLoggingHandler);
+    qDebug() << "tm monitor service log file is: " << logPath;
+    */
     setServiceDescription("iehmonitor Service");
     //this should not be paused
     //setServiceFlags(QtServiceBase::CanBeSuspended);
@@ -46,10 +60,7 @@ TimeoutService::~TimeoutService()
 
 void TimeoutService::start()
 {
-    QCoreApplication *app = application();
-    logfile.open("G:\\tmp\\log_file.txt", ofstream::app);
-    //qInstallMessageHandler(SimpleLoggingHandler);
-
+    //QCoreApplication *app = application();
     qDebug()<< "hello";
     //TimeoutEventFilter *myfilter=new TimeoutEventFilter;
     //app->installNativeEventFilter(myfilter);
