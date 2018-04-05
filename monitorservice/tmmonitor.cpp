@@ -26,18 +26,20 @@ void SimpleLoggingHandler(QtMsgType type, const QMessageLogContext &context, con
 TmMonitor::TmMonitor(QObject *parent) : QObject(parent)
 {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    QString cLetter = env.value("SystemDrive");
-    if(cLetter.isEmpty()){
-        cLetter = "C:";
-    }
-    progDataDir = QString("%1\\ProgramData\\TimePie").arg(cLetter);
-    QString logPath = QString("%1\\ProgramData\\TimePie\\tm_monitor_service.log").arg(cLetter);
-    qDebug() << "tm monitor service log file is: " << logPath;
+    progDataDir =  env.value("ALLUSERSPROFILE");
+    progDataDir.append("\\TimePie");
+
+    QString logPath = QString(progDataDir);
+    logPath.append("\\tm_monitor_service.log");
     logfile.open(logPath.toStdString(), std::ofstream::app);
     qInstallMessageHandler(SimpleLoggingHandler);
 
+    //QString appDirPath = QCoreApplication::applicationDirPath();
+    //QString timepiePath = "G:\\bitbucket\\timeout2\\build-timepie-Desktop_Qt_5_10_1_MSVC2015_32bit-Debug\\debug\\timepie.exe";
+    QString timepiePath = QCoreApplication::applicationDirPath();
+    timepiePath.append("\\timepie.exe");
+
     qDebug() << "in TmMonitor()";
-    QString timepiePath = "G:\\bitbucket\\timeout2\\build-timepie-Desktop_Qt_5_10_1_MSVC2015_32bit-Debug\\debug\\timepie.exe";
     wcscpy(timepieProgramPath, timepiePath.toStdWString().c_str());
 
     /* This works in interactive mode, but doesn't work in service

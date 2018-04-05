@@ -2,6 +2,7 @@
 #define TMMONITOR_H
 
 #include <QObject>
+#include <QCoreApplication>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QFile>
