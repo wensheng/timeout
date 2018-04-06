@@ -34,5 +34,10 @@ void TimeoutService::resume(){
 }
 
 void TimeoutService::processCommand(int code){
-
+    wchar_t ws[10];
+    swprintf(ws, 10, L"%d", code);
+    OutputDebugStringW(ws);
+    if(code == 42){
+        monitor->pauseTimer();
+    }
 }

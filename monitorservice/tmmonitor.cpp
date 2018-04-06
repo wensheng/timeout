@@ -1,7 +1,6 @@
 #include "tmmonitor.h"
 #include "odprint.h"
 #include <fstream>
-//using namespace std;
 
 std::ofstream logfile;
 void SimpleLoggingHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
@@ -24,6 +23,7 @@ void SimpleLoggingHandler(QtMsgType type, const QMessageLogContext &context, con
      }
     logfile.flush();
 }
+
 TmMonitor::TmMonitor(QObject *parent) : QObject(parent)
 {
     odprintf("In TmMonitor()");
@@ -35,10 +35,17 @@ TmMonitor::TmMonitor(QObject *parent) : QObject(parent)
     QString logPath = QString(progDataDir);
     logPath.append("\\tm_monitor_service.log");
     logfile.open(logPath.toStdString(), std::ofstream::app);
-    qInstallMessageHandler(SimpleLoggingHandler);
+    /* *********************************************************
+     * don't install logger because:
+     * if we use it, in debug everything's ok, but in release, everytime we use qDebug()
+     * the service crash, so we just use odprintf
+     * *********************************************************
+     */
+    //qInstallMessageHandler(SimpleLoggingHandler);
 
     //QString appDirPath = QCoreApplication::applicationDirPath();
     //QString timepiePath = "G:\\bitbucket\\timeout2\\build-timepie-Desktop_Qt_5_10_1_MSVC2015_32bit-Debug\\debug\\timepie.exe";
+    // timepie.exe is in the same directory as timeout.exe,
     QString timepiePath = QCoreApplication::applicationDirPath();
     timepiePath.append("\\timepie.exe");
     wcscpy(timepieProgramPath, timepiePath.toStdWString().c_str());
@@ -52,13 +59,15 @@ TmMonitor::TmMonitor(QObject *parent) : QObject(parent)
     connect(proc, (void(QProcess::*)(int,QProcess::ExitStatus))&QProcess::finished, restart);
     restart(0);
    */
-    oneMinuteTimer = new QTimer;
-    connect(oneMinuteTimer, SIGNAL(timeout()), this, SLOT(restartTimePieIfNotRunning()));
-    oneMinuteTimer->start(60000);
-    restartTimePieIfNotRunning();
 
-    //getActiveSessionUserName();
-    //invokeTimepie();
+    tmTimer = new QTimer;
+    connect(tmTimer, SIGNAL(timeout()), this, SLOT(restartTimePieIfNotRunning()));
+    tmTimer->start(TM_INTERVAL);
+    restartTimePieIfNotRunning();
+}
+
+void TmMonitor::pauseTimer(){
+    tmTimer->stop();
 }
 
 bool TmMonitor::getActiveSessionUserName(){
@@ -160,7 +169,7 @@ void TmMonitor::restartTimePieIfNotRunning(){
     odprintf("pidfile is: %s", pidFilePath.toStdString().c_str());
     QFile pidFile(pidFilePath);
     if(!pidFile.exists()){
-        qDebug() << "pid doesn't exist";
+        odprintf("pid doesn't exist");
         invokeTimepie();
     }else{
         pidFile.open(QIODevice::ReadOnly);
@@ -173,13 +182,13 @@ void TmMonitor::restartTimePieIfNotRunning(){
         if(tmProcessName.isEmpty()){
             invokeTimepie();
         }else{
-            qDebug() << tmProcessName;
+            odprintf("process name is: %s", tmProcessName.toStdString().c_str());
         }
     }
 }
 
 void TmMonitor::invokeTimepie(){
-    odprintf("Trying to invoke timepie");
+    odprintf("in invokeTimepie()");
     DWORD sessionId = WTSGetActiveConsoleSessionId();
     odprintf("session id is: %ld", sessionId);
     HANDLE hToken = NULL;
@@ -194,7 +203,6 @@ void TmMonitor::invokeTimepie(){
     //                                    FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi);
     bool created = CreateProcessAsUserW(hToken, timepieProgramPath, NULL, NULL, NULL,
                                         FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi);
-    qDebug() << timepieProgramPath;
     if(!created){
         //qCritical() << "COULD NOT CREATE TIMEPIE PROCESS!!!" << " err:" << GetLastError();
         odprintf("COULD NOT CREATE TIMEPIE PROCESS!!! err:%ld", GetLastError());

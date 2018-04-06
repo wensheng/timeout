@@ -14,12 +14,13 @@
 #include <Psapi.h>
 
 const unsigned int MAX_NAME_SIZE = 512;
-
+const unsigned int TM_INTERVAL = 120000;  // 2 minutes
 class TmMonitor : public QObject
 {
     Q_OBJECT
 public:
     explicit TmMonitor(QObject *parent = nullptr);
+    void pauseTimer();
 
 signals:
 
@@ -35,7 +36,7 @@ private:
     QProcess *proc;
     QString progDataDir;
     wchar_t timepieProgramPath[512];
-    QTimer *oneMinuteTimer;
+    QTimer *tmTimer;
     QString activeUserName;
 };
 

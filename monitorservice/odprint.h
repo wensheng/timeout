@@ -9,6 +9,9 @@
 /* from: http://unixwiz.net/techtips/outputdebugstring.html */
 void __cdecl odprintf(const char *format, ...)
 {
+#ifdef QT_NO_DEBUG
+    return;
+#endif
     char    buf[4096], *p = buf;
     wchar_t ws[2048];
     va_list args;
