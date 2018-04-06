@@ -1,4 +1,5 @@
 #include "tmmonitor.h"
+#include "odprint.h"
 #include <fstream>
 //using namespace std;
 
@@ -25,6 +26,8 @@ void SimpleLoggingHandler(QtMsgType type, const QMessageLogContext &context, con
 }
 TmMonitor::TmMonitor(QObject *parent) : QObject(parent)
 {
+    odprintf("In TmMonitor()");
+
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     progDataDir =  env.value("ALLUSERSPROFILE");
     progDataDir.append("\\TimePie");
@@ -38,8 +41,6 @@ TmMonitor::TmMonitor(QObject *parent) : QObject(parent)
     //QString timepiePath = "G:\\bitbucket\\timeout2\\build-timepie-Desktop_Qt_5_10_1_MSVC2015_32bit-Debug\\debug\\timepie.exe";
     QString timepiePath = QCoreApplication::applicationDirPath();
     timepiePath.append("\\timepie.exe");
-
-    qDebug() << "in TmMonitor()";
     wcscpy(timepieProgramPath, timepiePath.toStdWString().c_str());
 
     /* This works in interactive mode, but doesn't work in service
@@ -68,24 +69,24 @@ bool TmMonitor::getActiveSessionUserName(){
      * when we run as service, service logon use LocalSystem account
      * so this can not used in interactive mode
      */
+    odprintf("getting userToken ...");
     result = WTSQueryUserToken(sessionId, &hToken);
     if (!result) {
-        qDebug() << "can not query usertoken";
-        DWORD err = GetLastError();
-        qDebug() << err;
+        odprintf("can not query usertoken [err=%ld]", GetLastError());
         CloseHandle(hToken);
         return false;
     }
 
     DWORD tokenInfoLength = 0;
     //first call gets length of TokenInformation
+    odprintf("GetTokenInformation  length ...");
     result = GetTokenInformation(hToken,
                                  TokenUser,
                                  NULL,
                                  0,
                                  &tokenInfoLength);
     if(!result && GetLastError() != ERROR_INSUFFICIENT_BUFFER){
-        qDebug() << "could not get token info length, err:" << GetLastError();
+        odprintf("could not get token info length, err:%ld", GetLastError());
         CloseHandle(hToken);
         return false;
     }
@@ -93,19 +94,20 @@ bool TmMonitor::getActiveSessionUserName(){
     std::vector<BYTE> buffer;
     buffer.resize(tokenInfoLength);
     PTOKEN_USER pTokenUser = reinterpret_cast<PTOKEN_USER>(&buffer[0]);
+    odprintf("GetTokenInformation again for real ...");
     result = GetTokenInformation(hToken,
                                  TokenUser,
                                  pTokenUser,
                                  tokenInfoLength,
                                  &tokenInfoLength);
     if(!result){
-        qDebug() << "could not get user tokeninfo, err:" << GetLastError();
+        odprintf("could not get user tokeninfo, err:%ld", GetLastError());
         CloseHandle(hToken);
         return false;
     }
-    qDebug() << "current session user sid:" << pTokenUser->User.Sid;
+    odprintf("current session user sid: %ld", pTokenUser->User.Sid);
     if(!IsValidSid(pTokenUser->User.Sid)){
-        qDebug() << "user sid not valid";
+        odprintf("user sid not valid");
         CloseHandle(hToken);
         return false;
     }
@@ -121,7 +123,7 @@ bool TmMonitor::getActiveSessionUserName(){
                                &dwSize,
                                &sidType);
     if(!result){
-        qDebug() << "could not look up sid";
+        odprintf("could not look up sid");
         CloseHandle(hToken);
         return false;
     }
@@ -153,9 +155,9 @@ void TmMonitor::restartTimePieIfNotRunning(){
     if(!getActiveSessionUserName()){
         return;
     }
-    qDebug() << "current user is " << activeUserName;
+    odprintf("current user is %s", activeUserName.toStdString().c_str());
     QString pidFilePath = QString("%1\\%2.pid").arg(progDataDir).arg(QString::fromLatin1(activeUserName.toUtf8().toBase64()));
-    qDebug() << "pidfile is: " << pidFilePath;
+    odprintf("pidfile is: %s", pidFilePath.toStdString().c_str());
     QFile pidFile(pidFilePath);
     if(!pidFile.exists()){
         qDebug() << "pid doesn't exist";
@@ -164,7 +166,7 @@ void TmMonitor::restartTimePieIfNotRunning(){
         pidFile.open(QIODevice::ReadOnly);
         DWORD tmpid = atol(pidFile.readAll());
         pidFile.close();
-        qDebug() << "pid exist: " << tmpid;
+        odprintf("pid exist: %ld", tmpid);
         //when testing, since this is 32bit program
         // we can only get another 32bit program name
         QString tmProcessName = getProcessName(tmpid);
@@ -177,15 +179,13 @@ void TmMonitor::restartTimePieIfNotRunning(){
 }
 
 void TmMonitor::invokeTimepie(){
-    qInfo() << "Trying to invoke timepie";
+    odprintf("Trying to invoke timepie");
     DWORD sessionId = WTSGetActiveConsoleSessionId();
-    qDebug() << "session id is: " << sessionId;
+    odprintf("session id is: %ld", sessionId);
     HANDLE hToken = NULL;
     bool queryResult = WTSQueryUserToken(sessionId, &hToken);
     if (!queryResult) {
-        qDebug() << "can not query usertoken";
-        DWORD err = GetLastError();
-        qDebug() << err;
+        odprintf("can not query usertoken, err:%ld", GetLastError());
     }
     STARTUPINFO si = STARTUPINFO();
     si.cb = sizeof(STARTUPINFO);
@@ -196,6 +196,7 @@ void TmMonitor::invokeTimepie(){
                                         FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi);
     qDebug() << timepieProgramPath;
     if(!created){
-        qCritical() << "COULD NOT CREATE TIMEPIE PROCESS!!!" << " err:" << GetLastError();
+        //qCritical() << "COULD NOT CREATE TIMEPIE PROCESS!!!" << " err:" << GetLastError();
+        odprintf("COULD NOT CREATE TIMEPIE PROCESS!!! err:%ld", GetLastError());
     }
 }

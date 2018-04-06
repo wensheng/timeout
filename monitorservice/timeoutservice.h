@@ -2,11 +2,7 @@
 #define TIMEOUTSERVICE_H
 
 #include <QApplication>
-#include <QTime>
-#include <QDir>
-#include <QSettings>
 #include <qtservice.h>
-#include "windows.h"
 #include "tmmonitor.h"
 
 class TimeoutService : public QtService<QApplication>

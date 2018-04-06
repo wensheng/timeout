@@ -1,0 +1,2 @@
+D:\Programs\qt\Qt5.10.1\5.10.1\msvc2015\bin\windeployqt.exe ..\build-timeout-Desktop_Qt_5_10_1_MSVC2015_32bit-Debug\debug\timeout.exe
+D:\Programs\qt\Qt5.10.1\5.10.1\msvc2015\bin\windeployqt.exe ..\build-timepie-Desktop_Qt_5_10_1_MSVC2015_32bit-Release\release\timepie.exe

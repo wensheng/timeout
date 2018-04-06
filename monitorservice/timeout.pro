@@ -8,7 +8,8 @@ SOURCES = main.cpp \
 
 HEADERS += \
     timeoutservice.h \
-    tmmonitor.h
+    tmmonitor.h \
+    odprint.h
 	
 include(qtservice/qtservice.pri)
 LIBS += -lpsapi -lwtsapi32 -lAdvapi32
