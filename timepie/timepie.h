@@ -39,10 +39,13 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 
-#include "windows.h"
+#include <sdkddkver.h>
+#define _WIN32_WINNT _WIN32_WINNT_WIN7
+#include <windows.h>
 #include <tchar.h>
 #include <psapi.h> //for GetModuleFileNameEx
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
+#include <lm.h>
 
 namespace Ui {
     class TMController;
@@ -55,6 +58,7 @@ class TimePie : public QDialog
 
 public:
     explicit TimePie(QWidget *parent = 0);
+    void showIfAdmin();
 
 protected:
     //bool eventFilter(QObject *obj, QEvent *event);
@@ -90,6 +94,7 @@ private:
     QFileSystemWatcher *fswatcher;
 
     QSqlDatabase db;
+    QString sessionUsername;
     QString lastApplicationName;
     QString appDataDir;
     QString progDataDir;
@@ -106,6 +111,7 @@ private:
     HWND *thisHwnd;
     bool notActive;
     bool configIsOK;
+    bool sessionUserIsAdmin;
 };
 
 //! [0]

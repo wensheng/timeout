@@ -4,6 +4,7 @@
 #include <QAbstractNativeEventFilter>
 #include <QWidget>
 #include <QDebug>
+#include "timepie.h"
 #include "windows.h"
 
 class TimePieEventFilter: public QAbstractNativeEventFilter
@@ -14,7 +15,7 @@ public:
     bool nativeEventFilter(const QByteArray &eventType, void *message, long *) override;
 
 private:
-    QWidget *target;
+    TimePie *target;
 };
 
 #endif // TIMEPIEEVENTFILTER_H

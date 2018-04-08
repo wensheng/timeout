@@ -1,3 +1,9 @@
-/*/*.pro.user
-/build-*/
+/installer/files
+build-*/
+release/
+debug/
+*.pro.user
 *.exe
+Makefile*
+.qmake.stash
+ui_dialog.h

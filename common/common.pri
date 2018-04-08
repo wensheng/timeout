@@ -2,5 +2,7 @@
 INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
-HEADERS       += $$PWD/simplecrypt.h
-SOURCES       += $$PWD/simplecrypt.cpp
+HEADERS += $$PWD/simplecrypt.h \
+           $$PWD/odprint.h
+
+SOURCES += $$PWD/simplecrypt.cpp

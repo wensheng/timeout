@@ -12,20 +12,32 @@
 #include "timepieeventfilter.h"
 #include "simplecrypt.h"
 #include <fstream>
+#include <sstream>
+#include <odprint.h>
 
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
+bool IsUserAdmin(wchar_t *uname);
+
 SimpleCrypt crypto(Q_UINT64_C(0xa0f1608c385c24a9));
 
 //! [0]
 TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
 {
-#ifdef _DEBUG
-	QString logpath(QDir::home().path());
-    logpath.append("\\timepied.log");
-    timepie_logfile.open(logpath.toStdString().c_str(), std::fstream::app);
-    qInstallMessageHandler(TimepieLoggingHandler);
-#endif
+    /*
+     * session username
+     */
+    wchar_t currentUsername[256];
+    DWORD sizeUserName = sizeof(currentUsername);
+    GetUserNameW(currentUsername, &sizeUserName);
+
+    //check Admin
+    sessionUserIsAdmin = IsUserAdmin(currentUsername);
+    if(sessionUserIsAdmin){
+        odprintf("user IS admin");
+    }else{
+        odprintf("user NOT admin");
+    }
 
     /*
      * set C:\ProgramData\TimePie as progDataDir
@@ -33,27 +45,39 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     progDataDir = env.value("ALLUSERSPROFILE");
     progDataDir.append("\\TimePie");
-    qDebug() << "progDataDir: " << progDataDir;
+
 
     /*
-     * write process id to file, filename is username base64'ed + ".pid"
+     * session username base64 encoded
      */
-    QString sessionUsername;
-    wchar_t currentUsername[256];
-    DWORD sizeUserName = sizeof(currentUsername);
-    if(GetUserNameW(currentUsername, &sizeUserName)){
-        sessionUsername = QString::fromWCharArray(currentUsername);
-    }else{
-        sessionUsername = env.value("USERNAME");  // for Mac/Linux will be USER
-    }
-    qDebug() << "session username is: " << sessionUsername;
-    QString pidFilePath = QString("%1\\%2.pid").arg(progDataDir).arg(QString::fromLatin1(sessionUsername.toUtf8().toBase64()));
-    qDebug() << "pid file is: " << pidFilePath;
+    sessionUsername = QString::fromWCharArray(currentUsername);
+    //sessionUsername = env.value("USERNAME");  // for Mac/Linux will be USER
+    odprintf("session username is: %s", sessionUsername.toStdString().c_str());
+    QString b64Username = QString::fromLatin1(sessionUsername.toUtf8().toBase64());
+
+    /*
+     * write process id to file, filename is b64encoded username + ".pid"
+     */
+    QString pidFilePath = QString("%1\\%2.pid").arg(progDataDir).arg(b64Username);
     DWORD pid = GetCurrentProcessId();
     std::ofstream pidFile;
     pidFile.open(pidFilePath.toStdString().c_str(), std::ofstream::out);
     pidFile << pid;
     pidFile.close();
+
+    /*
+     * write logfile, filename is b64encoded username + "_tm.log"
+     * if we do qInstallMessageHandler, the program crash in release mode
+     * so we only do this in debug
+     * so no logfile in release
+     */
+#ifdef QT_DEBUG
+    QString logpath = QString("%1\\%2_tm.log").arg(progDataDir).arg(b64Username);
+    timepie_logfile.open(logpath.toStdString().c_str(), std::fstream::app);
+    // if we have DebugView from sysinternal running, the program can not open output and won't start
+    // so don't use DebugView in Debug
+    qInstallMessageHandler(TimepieLoggingHandler);
+#endif
 
     /*
      * register hotkey ctrl+shift+m to bring up setting window
@@ -119,9 +143,8 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
             this, SLOT(iconActivated(QSystemTrayIcon::ActivationReason)));
 #endif
 
-    connect(fswatcher,SIGNAL(fileChanged(QString)),this,SLOT(show()));
+    //connect(fswatcher,SIGNAL(fileChanged(QString)),this,SLOT(show()));
 
-    //connect(loginButton, SIGNAL(released()), this, SLOT(login()));
     connect(netManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(processWebServerReply(QNetworkReply*)));
 
     initData();
@@ -134,7 +157,8 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     
     //upload data every half hour(1800 seconds)
     hourTimer = new QTimer();
-    hourTimer->setInterval(1800000);
+    //hourTimer->setInterval(1800000);
+    hourTimer->setInterval(300000);
     connect(hourTimer,SIGNAL(timeout()),this,SLOT(sendData()));
     hourTimer->start();
     
@@ -142,7 +166,15 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
     HWND thisHwnd = (HWND)this->winId();
     WTSRegisterSessionNotification(thisHwnd, NOTIFY_FOR_ALL_SESSIONS);
 }
-//! [0]
+
+
+void TimePie::showIfAdmin(){
+    if(sessionUserIsAdmin){
+        setWindowState( (windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+        show();
+        activateWindow();
+    }
+}
 
 void TimePie::initData()
 {
@@ -152,14 +184,17 @@ void TimePie::initData()
     //create table `entry` if not already exists
     db = QSqlDatabase::addDatabase("QSQLITE");
     db.setDatabaseName(dbPath);
-	if(db.open()==false){
-		QMessageBox::critical(0, QObject::tr("Systray"),
-                              QObject::tr("Could not open database"));
-	}else{
-		QString sqlstr = QString("CREATE TABLE IF NOT EXISTS entry(timestamp integer, name text, title text, forget integer)");
+    if(db.open()){
+        /* "entry" table:
+         *   uname: session username
+         *   pname: foreground program name
+         *   title: program title
+         *   forget: ?
+         */
+        QString sqlstr = QString("CREATE TABLE IF NOT EXISTS entry(timestamp integer, uname text, pname text, title text, forget integer)");
 		QSqlQuery query = QSqlQuery(sqlstr,db);
 		query.exec();
-        qDebug()<< db.tables();
+        //qDebug()<< db.tables();
         db.close();
     }
 
@@ -227,7 +262,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
     if(serverReply->error() != QNetworkReply::NoError)
     {
         ui->isrunningLabel->setText("network error");
-        qDebug() << "network error";
+        odprintf("network error");
         return;
     }
 
@@ -237,7 +272,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
     QString replyType = jsonObj["type"].toString();
     if(replyType == "auth"){
         QString result = jsonObj["result"].toString();
-        qDebug() << "Got auth result: " << result;
+        odprintf("got auth result: %s", result.toStdString().c_str());
         if(result == "ok"){
             if(!configIsOK){
                 saveConfigFile();
@@ -248,6 +283,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
             //qDebug() << "userId:" << userId << " status:" << userStatus;
             //writeToSharedMemory();
             ui->confirmedLabel->show();
+            ui->isrunningLabel->setText("Apikey is verified.");
         }else{
             configIsOK = false;
             ui->confirmedLabel->hide();
@@ -257,7 +293,8 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
             //TODO: what do we do here?
         }
     }else if(replyType == "upload"){
-        qDebug() << jsonObj["file"] << " saved on remote server.";
+        //odprintf("file: %s was saved on remote server", jsonObj["file"].toString().constData());
+        odprintf("file: %s was saved on remote server", jsonObj["file"].toString().toStdString().c_str());
         //QString fileName = QString("%1\\%2.jpg").arg(appDataDir).arg(jsonObj["file"].toString());
         //if(QFileInfo::exists(fileName)){
         //    QFile::remove(fileName);
@@ -280,7 +317,7 @@ void TimePie::saveConfigFile(){
     configFile.close();
     configIsOK = true;
     ui->confirmedLabel->show();
-    qDebug() << "config file:" << configFilePath << " saved.";
+    odprintf("config file: %s saved", configFilePath.toStdString().c_str());
 }
 
 void TimePie::openHelpBrowser()
@@ -335,20 +372,23 @@ void TimePie::shootScreen()
 
         if(currentApplicationName!=lastApplicationName || currentWindowTitle!=lastWindowTitle){
             if(db.open()){
-				QString sqlstr = QString("insert into entry values('%1','%2','%3',%4)")
+                QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
                                  .arg(currentTime.toTime_t())
+                                 .arg(sessionUsername)
                                  .arg(currentApplicationName)
                                  .arg(currentWindowTitle)
                                  .arg(1);
-				qDebug()<<sqlstr.toUtf8().data();
+                //qDebug()<<sqlstr.toUtf8().data();
+                odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
 
 				QSqlQuery query = QSqlQuery(db);
 				bool ret = query.exec(sqlstr);
 
                 if (ret){
+                    odprintf(" -> success");
                     //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
 				}else{
-					qDebug()<<"insert failed\n";
+                    odprintf(" -> insert failed");
 				}
                 db.close();
             }
@@ -407,7 +447,7 @@ void TimePie::sendData()
     }
 
 
-    QString sqlstr = QString("SELECT timestamp, name, title FROM entry where timestamp >%1").arg(lastUploadTime);
+    QString sqlstr = QString("SELECT timestamp, uname, pname, title FROM entry where timestamp >%1").arg(lastUploadTime);
     if(!db.open()){
         return;
     }
@@ -417,8 +457,9 @@ void TimePie::sendData()
     while (query.next()){
         QJsonObject jsonObj;
         jsonObj.insert("time", query.value(0).toInt());
-        jsonObj.insert("name", query.value(1).toString());
-        jsonObj.insert("title", query.value(2).toString());
+        jsonObj.insert("uname", query.value(1).toString());
+        jsonObj.insert("pname", query.value(2).toString());
+        jsonObj.insert("title", query.value(3).toString());
         jsonArray.append(jsonObj);
     }
     db.close();
@@ -493,24 +534,31 @@ void TimePie::uploadFile(const QFileInfo fi){
 }
 
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
+    std::ostringstream ostrstream;
+//    wchar_t ws[2048];
     switch (type) {
     case QtInfoMsg:
-        timepie_logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Info: " << msg.toLocal8Bit().constData() << "| in:" << context.file << context.line << context.function << "\n";
+        ostrstream << QTime::currentTime().toString().toLocal8Bit().constData() << " Info: " << msg.toLocal8Bit().constData() << "| in:" << context.file << context.line << context.function << "\n";
         break;
     case QtDebugMsg:
-        timepie_logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Debug: " << msg.toLocal8Bit().constData() << "| in:" << context.file << " line:" << context.line << " func:" << context.function << "\n";
+        ostrstream << QTime::currentTime().toString().toLocal8Bit().constData() << " Debug: " << msg.toLocal8Bit().constData() << "| in:" << context.file << " line:" << context.line << " func:" << context.function << "\n";
         break;
     case QtCriticalMsg:
-        timepie_logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Critical: " << context.file << context.line << context.function << "\n";
+        ostrstream << QTime::currentTime().toString().toLocal8Bit().constData() << " Critical: " << context.file << context.line << context.function << "\n";
         break;
     case QtWarningMsg:
-        timepie_logfile << QTime::currentTime().toString().toLocal8Bit().constData() << " Warning: " << context.file << context.line << context.function << "\n";
+        ostrstream << QTime::currentTime().toString().toLocal8Bit().constData() << " Warning: " << context.file << context.line << context.function << "\n";
         break;
     case QtFatalMsg:
-        timepie_logfile << QTime::currentTime().toString().toLocal8Bit().constData() <<  " Fatal: " << msg.toLocal8Bit().constData() << "\n";
+        ostrstream << QTime::currentTime().toString().toLocal8Bit().constData() <<  " Fatal: " << msg.toLocal8Bit().constData() << "\n";
         abort();
      }
-    timepie_logfile.flush();
+    timepie_logfile << ostrstream.str();
+    //timepie_logfile.flush();
+//#ifdef QT_NO_DEBUG
+//    swprintf(ws, 2048, L"hs", ostrstream.str().c_str());
+//    OutputDebugString(ws);
+//#endif
 }
 
 bool TimePie::nativeEvent(const QByteArray &eventType, void *message, long *result){
@@ -535,7 +583,7 @@ bool TimePie::nativeEvent(const QByteArray &eventType, void *message, long *resu
 bool TimePie::getConfigFromFile(){
     QFile configFile(configFilePath);
     if(!configFile.exists()){
-        qDebug() << "timeout.cfg doesn't exist.";
+        odprintf("timeout.cfg doesn't exist.");
         return false;
     }
     configFile.open(QIODevice::ReadOnly);
@@ -576,15 +624,20 @@ void TimePie::authWithWebServer(){
     netManager->post(req, QJsonDocument(data).toJson());
 }
 
-/*
-void TimePie::on_runButton_clicked()
-{
-    ui->isrunningLabel->setText("Time-Out is running.");
-        ui->isrunningLabel->setStyleSheet("QLabel { color : green; }");
-        ui->runButton->hide();
-}*/
-
 void TimePie::on_closeButton_clicked()
 {
     hide();
+}
+
+bool IsUserAdmin(wchar_t* uname){
+    bool result;
+    DWORD rc;
+    USER_INFO_1 *info;
+    rc = NetUserGetInfo(NULL, uname, 1, (byte **) &info);
+    if(rc!= NERR_Success){
+        return false;
+    }
+    result = info->usri1_priv == USER_PRIV_ADMIN;
+    NetApiBufferFree(info);
+    return result;
 }

@@ -1,7 +1,7 @@
 #include "timepieeventfilter.h"
 
 void TimePieEventFilter::setup(QWidget *target){
-    this->target = target;
+    this->target = qobject_cast<TimePie *>(target);
 }
 bool TimePieEventFilter::nativeEventFilter(const QByteArray &eventType, void *message, long *result){
     Q_UNUSED(eventType)
@@ -14,10 +14,12 @@ bool TimePieEventFilter::nativeEventFilter(const QByteArray &eventType, void *me
         // ... check HotKey
         if(msg->wParam == 100){
             //qDebug() << "HotKey worked";
-            target->setWindowState( (target->windowState() & ~Qt::WindowMinimized) |
-                                    Qt::WindowActive);
-            target->show();
+            //this is for bring window to front and has focus
+            //target->setWindowState( (target->windowState() & ~Qt::WindowMinimized) |
+            //                        Qt::WindowActive);
+            //target->show();
             //target->activateWindow();
+            target->showIfAdmin();
             return true;
         }
     }

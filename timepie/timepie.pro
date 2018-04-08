@@ -1,4 +1,4 @@
-QT += xml svg sql network
+QT +=  core gui widgets sql network
 
 SOURCES = main.cpp \
 	timepie.cpp \
@@ -10,13 +10,7 @@ HEADERS += timepie.h \
 RESOURCES = timepie.qrc
 
 include(../common/common.pri)
-LIBS += -lpsapi	-lWtsApi32 -lAdvapi32 -luser32
-
-# install
-target.path = desktop
-#sources.files = $$SOURCES $$HEADERS $$RESOURCES $$FORMS timepie.pro resources images
-#sources.path = .
-INSTALLS += target sources
+LIBS += -lpsapi	-lWtsApi32 -lAdvapi32 -luser32 -lNetapi32
 
 FORMS += \
     dialog.ui
