@@ -45,6 +45,10 @@
 #include <tchar.h>
 #include <psapi.h> //for GetModuleFileNameEx
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
+#include <Wingdi.h>
+//#include <gdiplusheaders.h>
+#include <gdiplus.h>
+
 #include <lm.h>
 
 namespace Ui {
@@ -84,6 +88,7 @@ private:
     void saveConfigFile();
     bool getConfigFromFile();
     void authWithWebServer();
+    void captureGameFullScreen();
 
     Ui::TMController *ui;
     HWND hwndFound;

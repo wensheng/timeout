@@ -10,7 +10,7 @@ HEADERS += timepie.h \
 RESOURCES = timepie.qrc
 
 include(../common/common.pri)
-LIBS += -lpsapi	-lWtsApi32 -lAdvapi32 -luser32 -lNetapi32
+LIBS += -lpsapi	-lWtsApi32 -lAdvapi32 -luser32 -lNetapi32 -lGdi32 -lGdiplus
 
 FORMS += \
     dialog.ui

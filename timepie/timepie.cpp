@@ -14,10 +14,13 @@
 #include <fstream>
 #include <sstream>
 #include <odprint.h>
+using namespace Gdiplus;
+#pragma comment (lib, "Gdiplus.lib")
 
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
 bool IsUserAdmin(wchar_t *uname);
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
 SimpleCrypt crypto(Q_UINT64_C(0xa0f1608c385c24a9));
 
@@ -640,4 +643,93 @@ bool IsUserAdmin(wchar_t* uname){
     result = info->usri1_priv == USER_PRIV_ADMIN;
     NetApiBufferFree(info);
     return result;
+}
+
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
+{
+   UINT  num = 0;          // number of image encoders
+   UINT  size = 0;         // size of the image encoder array in bytes
+
+   ImageCodecInfo* pImageCodecInfo = NULL;
+   GetImageEncodersSize(&num, &size);
+   if(size == 0)
+      return -1;  // Failure
+
+   pImageCodecInfo = (ImageCodecInfo*)(malloc(size));
+   if(pImageCodecInfo == NULL)
+      return -1;  // Failure
+
+   GetImageEncoders(num, size, pImageCodecInfo);
+
+   for(UINT j = 0; j < num; ++j)
+   {
+      if( wcscmp(pImageCodecInfo[j].MimeType, format) == 0 )
+      {
+         *pClsid = pImageCodecInfo[j].Clsid;
+         free(pImageCodecInfo);
+         return j;  // Success
+      }
+   }
+   free(pImageCodecInfo);
+   return -1;  // Failure
+}
+
+void TimePie::captureGameFullScreen(){
+#ifdef WILLTRYTHIS
+    //https://www.codeproject.com/Articles/5051/Various-methods-for-capturing-the-screen
+    int nScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int nScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+    HWND hDesktopWnd = GetDesktopWindow();
+    HDC hDesktopDC = GetDC(hDesktopWnd);
+    HDC hCaptureDC = CreateCompatibleDC(hDesktopDC);
+    HBITMAP hCaptureBitmap =CreateCompatibleBitmap(hDesktopDC,
+                            nScreenWidth, nScreenHeight);
+    SelectObject(hCaptureDC,hCaptureBitmap);
+    BitBlt(hCaptureDC,0,0,nScreenWidth,nScreenHeight,
+           hDesktopDC,0,0,SRCCOPY|CAPTUREBLT);
+    SaveCapturedBitmap(hCaptureBitmap); //Place holder - Put your code
+                                //here to save the captured image to disk
+    ReleaseDC(hDesktopWnd,hDesktopDC);
+    DeleteDC(hCaptureDC);
+    DeleteObject(hCaptureBitmap);
+#else
+    //https://stackoverflow.com/questions/3291167/how-can-i-take-a-screenshot-in-a-windows-application
+    int x1, y1, x2, y2, w, h;
+
+    // get screen dimensions
+    x1  = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    y1  = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    x2  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    y2  = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    w   = x2 - x1;
+    h   = y2 - y1;
+
+    // copy screen to bitmap
+    // get device context of the screen
+    HDC     hScreen = GetDC(NULL);
+    // a device context to put it in
+    HDC     hDC     = CreateCompatibleDC(hScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, w, h);
+    HGDIOBJ old_obj = SelectObject(hDC, hBitmap);
+    BOOL    bRet    = BitBlt(hDC, 0, 0, w, h, hScreen, x1, y1, SRCCOPY);
+
+    //use gdi plus to save to png file
+    GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput);
+
+    Bitmap *image = new Bitmap(hBitmap, NULL);
+    CLSID myClsId;
+    GetEncoderClsid(L"image/png", &myClsId);
+    image->Save("hello.png", &myClsId, NULL);
+    delete image;
+    GdiplusShutdown();
+
+
+    // clean up
+    SelectObject(hDC, old_obj);
+    DeleteDC(hDC);
+    ReleaseDC(NULL, hScreen);
+    DeleteObject(hBitmap);
+    //also will try https://www.apriorit.com/dev-blog/193-multi-monitor-screenshot
 }
