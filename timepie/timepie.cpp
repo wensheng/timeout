@@ -8,14 +8,37 @@
 ****************************************************************************/
 
 #include "timepie.h"
+#include "pch.h"
 #include "ui_dialog.h"
 #include "timepieeventfilter.h"
 #include "simplecrypt.h"
 #include <fstream>
 #include <sstream>
 #include <odprint.h>
-using namespace Gdiplus;
+#include <psapi.h> //for GetModuleFileNameEx
+#include <WtsApi32.h> // for WTSRegisterSessionNotification
+// without below 2 lines, will have min/max identifier not found error
+// this is a bug in GdiplusTypes.h, it's reported to be fixed internally at MS, but not released yet
+// 20200527
+// see: https://developercommunity.visualstudio.com/content/problem/727770/gdiplustypesh-does-not-compile-with-nominmax.html
+using std::min;
+using std::max;
+#include <wrl.h>
+#include <wincodec.h>
+#include <Wingdi.h>
+#include <gdiplus.h>
+#include <d3d11_1.h>
+#include <dxgi.h>
+//#include <comdef.h>
+#include <system_error>
+#include <ScreenGrab.h>
+//#include <DirectXHelpers.h>
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
 #pragma comment (lib, "Gdiplus.lib")
+using namespace Gdiplus;
+using namespace Microsoft::WRL;
+using namespace DirectX;
 
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
@@ -339,6 +362,8 @@ void TimePie::shootScreen()
     QString screenshotPath = QString(progDataDir);
     screenshotPath.append("\\shots");
     QScreen *screen = QGuiApplication::primaryScreen();
+    QString fileName = QString("%1\\%2.jpg").arg(screenshotPath).arg(currentTime.toTime_t());
+    int img_quality = 25;  //default -1, 0:small compressed, 100:large uncompressed
 
     //see: http://doc.qt.nokia.com/4.7/desktop-screenshot-screenshot-cpp.html
     QPixmap originalPixmap = QPixmap(); // clear image for low memory situations on embedded devices.
@@ -353,7 +378,7 @@ void TimePie::shootScreen()
         if(appTitle!=NULL){
             currentWindowTitle = QString::fromUtf16( (ushort*)appTitle );
 		}
-        //qDebug()<<"title:"<<currentWindowTitle.toUtf8().data();
+        odprintf("foregroundWindow: %s",  currentWindowTitle.toStdString().c_str());
 
         //Get active window application filename
         //e.g. if active window is firefox, it will be "firefox.exe"
@@ -361,7 +386,7 @@ void TimePie::shootScreen()
         DWORD procId=0;
         GetWindowThreadProcessId(iHwndForegroundWindow,&procId);
 
-        HANDLE handle = OpenProcess(1040,0,procId);
+        HANDLE handle = OpenProcess(1040, 0, procId);
         //PROCESS_QUERY_INFORMATION(0x400)|PROCESS_VM_READ(0x10)=0x410=1040
 
         if(handle){
@@ -395,28 +420,40 @@ void TimePie::shootScreen()
 				}
                 db.close();
             }
-
+            MONITORINFO monitorInfo;
+            monitorInfo.cbSize = sizeof (MONITORINFO);
+            GetMonitorInfoW(MonitorFromWindow(iHwndForegroundWindow, MONITOR_DEFAULTTOPRIMARY), &monitorInfo);
             LPRECT lpRect=new RECT();
-            int x, y, w, h;
-            if(GetWindowRect(iHwndForegroundWindow,lpRect)){
-                x = lpRect->left;
-                y = lpRect->top;
-                w = lpRect->right - lpRect->left + 1;
-                h = lpRect->bottom - lpRect->top + 1;
-                originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
-                                                 x,y,w,h);
+            bool gotRect = GetWindowRect(iHwndForegroundWindow, lpRect);
+            if(gotRect){
+                bool isFullScreen = (lpRect->left == monitorInfo.rcMonitor.left
+                                     && lpRect->right == monitorInfo.rcMonitor.right
+                                     && lpRect->top == monitorInfo.rcMonitor.top
+                                     && lpRect->bottom == monitorInfo.rcMonitor.bottom);
+                if(isFullScreen){
+                    odprintf("fullscreen mode detected!");
+                    captureGameFullScreen2(iHwndForegroundWindow,
+                                          fileName,
+                                          lpRect->right - lpRect->left,
+                                          lpRect->bottom - lpRect->top);
+                }else{
+                    originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
+                                                        lpRect->left,
+                                                        lpRect->top,
+                                                        lpRect->right - lpRect->left + 1,
+                                                        lpRect->bottom - lpRect->top + 1);
+                }
             }else{
                 //This works, but it only grab the pane, not window,
                 //i.e. no outer frame, not menu, status.
                 originalPixmap = screen->grabWindow((WId)iHwndForegroundWindow);
             }
         }
+    }else{
+        odprintf("Could not get foreground window");
     }
 
 
-	//todo: should we use jpg?
-    QString format = "jpg"; //png, jpg, bmp, can not do gif write
-    int img_quality = 25;  //default -1, 0:small compressed, 100:large uncompressed
 
     /*
 	//old debug stuff, don't delete
@@ -429,12 +466,11 @@ void TimePie::shootScreen()
     */
     //QString fileName = QString("%1/%2.%3").arg(appDataDir).arg(currentTime.currentMSecsSinceEpoch()).arg(format);
 
-    QString fileName = QString("%1\\%2.%3").arg(screenshotPath).arg(currentTime.toTime_t()).arg(format);
 
 	//todo: sometimes have null pixmap, investigate
     if (!originalPixmap.isNull()){
         //save original size
-        originalPixmap.save(fileName, format.toStdString().c_str(), img_quality);
+        originalPixmap.save(fileName, "jpg", img_quality);
 		//save half size
 		//originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
     }
@@ -674,7 +710,155 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
    return -1;  // Failure
 }
 
-void TimePie::captureGameFullScreen(){
+void TimePie::captureGameFullScreen(HWND hWnd, QString filename, UINT width, UINT height){
+    //wchar_t *filenameL = new wchar_t[filename.length() + 1];
+    //filename.toWCharArray(filenameL);
+    //filenameL[filename.length()] = 0;
+    const wchar_t *wfilename = filename.toStdWString().c_str();
+
+    /*
+    Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
+    if(FAILED(initialize)){
+        odprintf("Failed to initialize");
+    }*/
+
+    // create Factory, must be IDXGIFactory2 for CreateSwapChainForHwnd method
+    ComPtr<IDXGIFactory2> m_dxgiFactory;
+    DX::ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(m_dxgiFactory.ReleaseAndGetAddressOf())));
+
+    ComPtr<IDXGIAdapter1> adapter;
+    for (UINT adapterIndex = 0;
+                SUCCEEDED(m_dxgiFactory->EnumAdapters1(
+                    adapterIndex,
+                    adapter.ReleaseAndGetAddressOf()));
+                adapterIndex++)
+    {
+        DXGI_ADAPTER_DESC1 desc;
+        DX::ThrowIfFailed(adapter->GetDesc1(&desc));
+        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE){
+            // Don't select the Basic Render Driver adapter.
+            continue;
+        }
+        //qDebug() << "Direct3D Adapter " << adapterIndex << ": VID:" << desc.VendorId << ", PID:" << desc.DeviceId << " - " << desc.Description;
+        odprintf("device: %ls", desc.Description);
+        break;
+    }
+    if(!adapter){
+        return;
+        //qDebug() << "no Direct3D hardware adapter found";
+        //TODO: use gdi
+    }
+    odprintf("factory and adapter created");
+
+
+    //UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    UINT creationFlags = 0;
+#ifdef QT_DEBUG
+    creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+    static const D3D_FEATURE_LEVEL featureLevels[] ={
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_3,
+        D3D_FEATURE_LEVEL_9_2,
+        D3D_FEATURE_LEVEL_9_1,
+    };
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    D3D_FEATURE_LEVEL  m_d3dFeatureLevel;
+
+    HRESULT hr = D3D11CreateDevice(
+        adapter.Get(),
+        D3D_DRIVER_TYPE_UNKNOWN,
+        nullptr,
+        creationFlags,
+        featureLevels,
+        ARRAYSIZE(featureLevels),
+        D3D11_SDK_VERSION,
+        device.GetAddressOf(),  // Returns the Direct3D device created.
+        &m_d3dFeatureLevel,     // Returns feature level of device created.
+        context.GetAddressOf()  // Returns the device immediate context.
+    );
+
+    if (FAILED(hr)){
+        // If the initialization fails, fall back to the WARP device.
+        // For more information on WARP, see:
+        // http://go.microsoft.com/fwlink/?LinkId=286690
+        hr = D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_WARP, // Create a WARP device instead of a hardware device.
+            nullptr,
+            creationFlags,
+            featureLevels,
+            _countof(featureLevels),
+            D3D11_SDK_VERSION,
+            device.GetAddressOf(),
+            &m_d3dFeatureLevel,
+            context.GetAddressOf()
+        );
+
+        if (FAILED(hr)){
+            odprintf("Could not created d3d device");
+            return;
+        }
+    }else{
+        odprintf("hardware CreateDevice successful");
+    }
+
+
+    ComPtr<ID3D11Device1> m_d3dDevice;
+    ComPtr<ID3D11DeviceContext1> m_d3dContext;
+    ComPtr<ID3DUserDefinedAnnotation> m_d3dAnnotation;
+    DX::ThrowIfFailed(device.As(&m_d3dDevice));
+    DX::ThrowIfFailed(context.As(&m_d3dContext));
+    DX::ThrowIfFailed(context.As(&m_d3dAnnotation));
+    odprintf("d3d device and context are created.");
+
+    ComPtr<IDXGISwapChain1> m_swapChain;
+
+    DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
+    ZeroMemory(&swapChainDesc, sizeof(swapChainDesc));
+    swapChainDesc.Width = width;
+    swapChainDesc.Height = height;
+    swapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // this is the most common swapchain format
+    swapChainDesc.Stereo = false;
+    swapChainDesc.SampleDesc.Count = 1; // don't use multi-sampling
+    swapChainDesc.SampleDesc.Quality = 0;
+    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapChainDesc.BufferCount = 2; // use double buffering to enable flip
+    swapChainDesc.Scaling = DXGI_SCALING_NONE;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+    swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO;
+
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullScreenDesc;
+    ZeroMemory(&fullScreenDesc, sizeof(fullScreenDesc));
+    fullScreenDesc.RefreshRate.Numerator = 60;
+    fullScreenDesc.RefreshRate.Denominator = 1;
+    fullScreenDesc.Windowed = FALSE;
+
+    hr = m_dxgiFactory->CreateSwapChainForHwnd(device.Get(),
+                                               hWnd,
+                                               &swapChainDesc,
+                                               &fullScreenDesc,
+                                               nullptr,
+                                               &m_swapChain);
+    if(FAILED(hr)){
+        odprintf("Could not create swap chain");
+        return;
+    }
+
+    BOOL isFullscreen = FALSE;
+    m_swapChain->GetFullscreenState(&isFullscreen, nullptr);
+
+    ComPtr<ID3D11Texture2D> backBuffer;
+    hr = m_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<LPVOID*>(backBuffer.GetAddressOf()));
+    if(SUCCEEDED(hr)){
+        hr = SaveWICTextureToFile(context.Get(), backBuffer.Get(), GUID_ContainerFormatJpeg, wfilename);
+    }
+    DX::ThrowIfFailed(hr);
+    return;
 #ifdef WILLTRYTHIS
     //https://www.codeproject.com/Articles/5051/Various-methods-for-capturing-the-screen
     int nScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -716,14 +900,14 @@ void TimePie::captureGameFullScreen(){
     //use gdi plus to save to png file
     GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
-    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput);
+    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
     Bitmap *image = new Bitmap(hBitmap, NULL);
     CLSID myClsId;
     GetEncoderClsid(L"image/png", &myClsId);
-    image->Save("hello.png", &myClsId, NULL);
+    image->Save(L"hello.png", &myClsId, NULL);
     delete image;
-    GdiplusShutdown();
+    GdiplusShutdown(gdiplusToken);
 
 
     // clean up
@@ -731,5 +915,130 @@ void TimePie::captureGameFullScreen(){
     DeleteDC(hDC);
     ReleaseDC(NULL, hScreen);
     DeleteObject(hBitmap);
-    //also will try https://www.apriorit.com/dev-blog/193-multi-monitor-screenshot
+#endif
+}
+
+void TimePie::captureGameFullScreen2(HWND hWnd, QString filename, UINT width, UINT height){
+    const wchar_t *wfilename = filename.toStdWString().c_str();
+
+    /*
+    Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
+    if(FAILED(initialize)){
+        odprintf("Failed to initialize");
+    }*/
+
+    // reference:
+    //   https://walbourn.github.io/anatomy-of-direct3d-11-create-device/
+
+    UINT creationFlags = 0;
+#ifdef QT_DEBUG
+    creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+    static const D3D_FEATURE_LEVEL featureLevels[] ={
+        D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_3, D3D_FEATURE_LEVEL_9_2, D3D_FEATURE_LEVEL_9_1};
+
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    D3D_FEATURE_LEVEL  m_d3dFeatureLevel;
+
+    HRESULT hr = D3D11CreateDevice(nullptr,
+                                   D3D_DRIVER_TYPE_HARDWARE,
+                                   nullptr,
+                                   creationFlags,
+                                   featureLevels,
+                                   _countof(featureLevels),
+                                   D3D11_SDK_VERSION,
+                                   &device,
+                                   &m_d3dFeatureLevel,
+                                   &context);
+
+    if(hr == E_INVALIDARG){
+        hr = D3D11CreateDevice(nullptr,
+                               D3D_DRIVER_TYPE_HARDWARE,
+                            nullptr,
+                            creationFlags,
+                            &featureLevels[1],
+                            _countof(featureLevels) - 1,
+                            D3D11_SDK_VERSION,
+                            &device,
+                            &m_d3dFeatureLevel,
+                            &context);
+    }
+
+    odprintf("level_11_0=%d, got level=%d",
+             (int)D3D_FEATURE_LEVEL_11_0, (int)m_d3dFeatureLevel);
+    if(m_d3dFeatureLevel < D3D_FEATURE_LEVEL_11_0){
+        return;
+    }
+
+    ComPtr<ID3D11Device1> m_d3dDevice;
+    ComPtr<ID3D11DeviceContext1> m_d3dContext;
+    DX::ThrowIfFailed(device.As(&m_d3dDevice));
+    DX::ThrowIfFailed(context.As(&m_d3dContext));
+    odprintf("d3d device and context are created.");
+
+    ComPtr<IDXGIDevice> dxgiDevice;
+    //ComPtr<IDXGIAdapter> dxgiAdapter;
+    ComPtr<IDXGIAdapter2> dxgiAdapter2;
+    //ComPtr<IDXGIFactory1> dxgiFactory1;
+    ComPtr<IDXGIFactory2> dxgiFactory2;
+
+    DX::ThrowIfFailed(device.As(&dxgiDevice));
+    //dxgiDevice->GetAdapter(&dxgiAdapter);
+    //dxgiAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory1));
+    //DX::ThrowIfFailed(dxgiFactory1.As(&dxgiFactory2));
+    //dxgiAdapter2->GetParent(IID_PPV_ARGS(&dxgiFactory1));
+    dxgiDevice->GetParent(IID_PPV_ARGS(&dxgiAdapter2));
+    dxgiAdapter2->GetParent(IID_PPV_ARGS(&dxgiFactory2));
+
+    ComPtr<IDXGISwapChain1> m_swapChain;
+
+    DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
+    ZeroMemory(&swapChainDesc, sizeof(swapChainDesc));
+    swapChainDesc.Width = width;
+    swapChainDesc.Height = height;
+    swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // this is the most common swapchain format
+    swapChainDesc.Stereo = false;
+    swapChainDesc.SampleDesc.Count = 1; // don't use multi-sampling
+    swapChainDesc.SampleDesc.Quality = 0;
+    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapChainDesc.BufferCount = 2; // use double buffering to enable flip
+    swapChainDesc.Scaling = DXGI_SCALING_NONE;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+    swapChainDesc.Flags = 0;
+
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullScreenDesc;
+    ZeroMemory(&fullScreenDesc, sizeof(fullScreenDesc));
+    fullScreenDesc.RefreshRate.Numerator = 60;
+    fullScreenDesc.RefreshRate.Denominator = 1;
+    fullScreenDesc.Windowed = FALSE;
+
+    //ComPtr<IUnknown> unknownDev;
+    //DX::ThrowIfFailed(device.As(&unknownDev));
+
+    hr = dxgiFactory2->CreateSwapChainForHwnd(device.Get(),
+                                               hWnd,
+                                               &swapChainDesc,
+                                               &fullScreenDesc,
+                                               nullptr,
+                                               &m_swapChain);
+    if(FAILED(hr)){
+        std::string message = std::system_category().message(hr);
+        odprintf("Could not create swap chain: %s", message.c_str());
+        return;
+    }
+
+    BOOL isFullscreen = FALSE;
+    m_swapChain->GetFullscreenState(&isFullscreen, nullptr);
+
+    ComPtr<ID3D11Texture2D> backBuffer;
+    hr = m_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<LPVOID*>(backBuffer.GetAddressOf()));
+    if(SUCCEEDED(hr)){
+        hr = SaveWICTextureToFile(context.Get(), backBuffer.Get(), GUID_ContainerFormatJpeg, wfilename);
+    }
+    DX::ThrowIfFailed(hr);
+    return;
 }

@@ -40,14 +40,9 @@
 #include <QSqlQuery>
 
 #include <sdkddkver.h>
-#define _WIN32_WINNT _WIN32_WINNT_WIN7
+//#define _WIN32_WINNT _WIN32_WINNT_WIN7
 #include <windows.h>
 #include <tchar.h>
-#include <psapi.h> //for GetModuleFileNameEx
-#include <WtsApi32.h> // for WTSRegisterSessionNotification
-#include <Wingdi.h>
-//#include <gdiplusheaders.h>
-#include <gdiplus.h>
 
 #include <lm.h>
 
@@ -88,7 +83,8 @@ private:
     void saveConfigFile();
     bool getConfigFromFile();
     void authWithWebServer();
-    void captureGameFullScreen();
+    void captureGameFullScreen(HWND hwnd, QString filename, UINT width, UINT height);
+    void captureGameFullScreen2(HWND hwnd, QString filename, UINT width, UINT height);
 
     Ui::TMController *ui;
     HWND hwndFound;

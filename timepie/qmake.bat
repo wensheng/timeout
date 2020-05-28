@@ -1,2 +1,2 @@
-set qtbin=D:\Programs\Qt\Qt5.10.1\5.10.1\msvc2015\bin
+set qtbin=C:\Qt\5.15.0\msvc2019_64\bin
 %qtbin%\qmake
