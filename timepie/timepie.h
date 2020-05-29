@@ -85,6 +85,7 @@ private:
     void authWithWebServer();
     void captureGameFullScreen(HWND hwnd, QString filename, UINT width, UINT height);
     void captureGameFullScreen2(HWND hwnd, QString filename, UINT width, UINT height);
+    void captureGameFullScreen3(QString filename);
 
     Ui::TMController *ui;
     HWND hwndFound;

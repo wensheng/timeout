@@ -27,11 +27,13 @@ using std::max;
 #include <wincodec.h>
 #include <Wingdi.h>
 #include <gdiplus.h>
-#include <d3d11_1.h>
+#include <d3d11.h>
 #include <dxgi.h>
+#include <KnownFolders.h>
 //#include <comdef.h>
 #include <system_error>
 #include <ScreenGrab.h>
+#include <WICTextureLoader.h>
 //#include <DirectXHelpers.h>
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -39,6 +41,12 @@ using std::max;
 using namespace Gdiplus;
 using namespace Microsoft::WRL;
 using namespace DirectX;
+
+namespace DirectX
+{
+    extern bool _IsWIC2() noexcept;
+    extern IWICImagingFactory* _GetWIC() noexcept;
+}
 
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
@@ -432,10 +440,17 @@ void TimePie::shootScreen()
                                      && lpRect->bottom == monitorInfo.rcMonitor.bottom);
                 if(isFullScreen){
                     odprintf("fullscreen mode detected!");
-                    captureGameFullScreen2(iHwndForegroundWindow,
-                                          fileName,
-                                          lpRect->right - lpRect->left,
-                                          lpRect->bottom - lpRect->top);
+                    //HWND hwnd = CreateWindowEx(NULL, L"WindowClass", L"", WS_EX_OVERLAPPEDWINDOW,
+                    //                           0, 0, lpRect->right - lpRect->left, lpRect->bottom - lpRect->top,
+                    //                           NULL, NULL, thisHwnd, NULL);
+                    //QWidget *qWidget = new QWidget;
+                    //HWND hwnd = (HWND)qWidget->winId();
+                    //captureGameFullScreen2(hwnd,
+                    //                      fileName,
+                    //                      lpRect->right - lpRect->left,
+                    //                      lpRect->bottom - lpRect->top);
+                    //delete qWidget;
+                    captureGameFullScreen3(fileName);
                 }else{
                     originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
                                                         lpRect->left,
@@ -919,7 +934,9 @@ void TimePie::captureGameFullScreen(HWND hWnd, QString filename, UINT width, UIN
 }
 
 void TimePie::captureGameFullScreen2(HWND hWnd, QString filename, UINT width, UINT height){
-    const wchar_t *wfilename = filename.toStdWString().c_str();
+    wchar_t *wfilename = new wchar_t[filename.length() + 1];
+    filename.toWCharArray(wfilename);
+    wfilename[filename.length()] = 0;
 
     /*
     Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
@@ -1014,11 +1031,11 @@ void TimePie::captureGameFullScreen2(HWND hWnd, QString filename, UINT width, UI
     ZeroMemory(&fullScreenDesc, sizeof(fullScreenDesc));
     fullScreenDesc.RefreshRate.Numerator = 60;
     fullScreenDesc.RefreshRate.Denominator = 1;
-    fullScreenDesc.Windowed = FALSE;
+    //fullScreenDesc.Windowed = FALSE;
+    fullScreenDesc.Windowed = TRUE;
 
     //ComPtr<IUnknown> unknownDev;
     //DX::ThrowIfFailed(device.As(&unknownDev));
-
     hr = dxgiFactory2->CreateSwapChainForHwnd(device.Get(),
                                                hWnd,
                                                &swapChainDesc,
@@ -1037,8 +1054,455 @@ void TimePie::captureGameFullScreen2(HWND hWnd, QString filename, UINT width, UI
     ComPtr<ID3D11Texture2D> backBuffer;
     hr = m_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<LPVOID*>(backBuffer.GetAddressOf()));
     if(SUCCEEDED(hr)){
+        odprintf("Trying to save to: %ls", wfilename);
         hr = SaveWICTextureToFile(context.Get(), backBuffer.Get(), GUID_ContainerFormatJpeg, wfilename);
+        if(FAILED(hr)){
+            std::string message = std::system_category().message(hr);
+            odprintf("Could not SaveWICTextureToFile:\n%s", message.c_str());
+        }
+    }else{
+        odprintf("Could not swapChain->GetBuffer.");
     }
-    DX::ThrowIfFailed(hr);
-    return;
+}
+
+/*
+ * Screen capture using Windows Desktop Duplication API
+ * largely based on: https://www.codeproject.com/Tips/1116253/Desktop-screen-capture-on-Windows-via-Windows-Desk
+ * save to jpg see: https://github.com/microsoft/DirectXTK/blob/master/Src/ScreenGrab.cpp
+ *
+ */
+void TimePie::captureGameFullScreen3(QString filename)
+{
+    wchar_t *wfilename = new wchar_t[filename.length() + 1];
+    filename.toWCharArray(wfilename);
+    wfilename[filename.length()] = 0;
+
+    ComPtr<ID3D11Device> lDevice;
+    ComPtr<ID3D11DeviceContext> pContext;
+    ComPtr<IDXGIOutputDuplication> lDeskDupl;
+    ComPtr<ID3D11Texture2D> lAcquiredDesktopImage;
+    ComPtr<ID3D11Texture2D> lGDIImage;
+    ComPtr<ID3D11Texture2D> lDestImage;
+    DXGI_OUTPUT_DESC lOutputDesc;
+    DXGI_OUTDUPL_DESC lOutputDuplDesc;
+
+    D3D_FEATURE_LEVEL gFeatureLevels[] =
+    {
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_1
+    };
+    D3D_FEATURE_LEVEL lFeatureLevel;
+
+    HRESULT hr(E_FAIL);
+
+    // Create device
+    hr = D3D11CreateDevice(nullptr,
+                    D3D_DRIVER_TYPE_HARDWARE,
+                    nullptr,
+                    0,
+                    gFeatureLevels,
+                    ARRAYSIZE(gFeatureLevels),
+                    D3D11_SDK_VERSION,
+                    &lDevice,
+                    &lFeatureLevel,
+                    &pContext);
+
+    if (lDevice == nullptr){
+        return;
+    }
+
+            // Get DXGI device
+    ComPtr<IDXGIDevice> lDxgiDevice;
+
+    hr = lDevice->QueryInterface(IID_PPV_ARGS(&lDxgiDevice));
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    // Get DXGI adapter
+    ComPtr<IDXGIAdapter> lDxgiAdapter;
+
+    hr = lDxgiDevice->GetParent(IID_PPV_ARGS(&lDxgiAdapter));
+    //dxgiAdapter2->GetParent(IID_PPV_ARGS(&dxgiFactory2));
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    UINT Output = 0;
+
+    // Get output
+    ComPtr<IDXGIOutput> lDxgiOutput;
+    hr = lDxgiAdapter->EnumOutputs(Output, &lDxgiOutput);
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    hr = lDxgiOutput->GetDesc(&lOutputDesc);
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    // QI for Output 1
+    ComPtr<IDXGIOutput1> lDxgiOutput1;
+
+    hr = lDxgiOutput->QueryInterface(IID_PPV_ARGS(&lDxgiOutput1));
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    // Create desktop duplication
+    hr = lDxgiOutput1->DuplicateOutput(lDevice.Get(), &lDeskDupl);
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    // Create GUI drawing texture
+    lDeskDupl->GetDesc(&lOutputDuplDesc);
+
+    D3D11_TEXTURE2D_DESC desc;
+
+    desc.Width = lOutputDuplDesc.ModeDesc.Width;
+    desc.Height = lOutputDuplDesc.ModeDesc.Height;
+    // this should always be DXGI_FORMAT_B8G8R8A8_UNORM
+    //https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api
+    desc.Format = lOutputDuplDesc.ModeDesc.Format;
+    desc.ArraySize = 1;
+    desc.BindFlags = D3D11_BIND_FLAG::D3D11_BIND_RENDER_TARGET;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_GDI_COMPATIBLE;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.MipLevels = 1;
+    desc.CPUAccessFlags = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    hr = lDevice->CreateTexture2D(&desc, NULL, &lGDIImage);
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    if (lGDIImage == nullptr){
+        return;
+    }
+
+    // Create CPU access texture
+    desc.Width = lOutputDuplDesc.ModeDesc.Width;
+    desc.Height = lOutputDuplDesc.ModeDesc.Height;
+    desc.Format = lOutputDuplDesc.ModeDesc.Format;
+    desc.ArraySize = 1;
+    desc.BindFlags = 0;
+    desc.MiscFlags = 0;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.MipLevels = 1;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+    desc.Usage = D3D11_USAGE_STAGING;
+
+    hr = lDevice->CreateTexture2D(&desc, NULL, &lDestImage);
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    if (lDestImage == nullptr){
+        return;
+    }
+
+    ComPtr<IDXGIResource> lDesktopResource;
+    DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
+
+    int lTryCount = 4;
+
+    do{
+        Sleep(100);
+
+        // Get new frame
+        hr = lDeskDupl->AcquireNextFrame(250, &lFrameInfo, &lDesktopResource);
+
+        if (SUCCEEDED(hr)){
+            break;
+        }
+
+        if (hr == DXGI_ERROR_WAIT_TIMEOUT)
+        {
+            continue;
+        }
+        else if (FAILED(hr)){
+            break;
+        }
+
+    } while (--lTryCount > 0);
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    // QI for ID3D11Texture2D
+    hr = lDesktopResource->QueryInterface(IID_PPV_ARGS(&lAcquiredDesktopImage));
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    if (lAcquiredDesktopImage == nullptr){
+        return;
+    }
+
+    // Copy image into GDI drawing texture
+    pContext->CopyResource(lGDIImage.Get(), lAcquiredDesktopImage.Get());
+
+
+    // Draw cursor image into GDI drawing texture
+    ComPtr<IDXGISurface1> lIDXGISurface1;
+    hr = lGDIImage->QueryInterface(IID_PPV_ARGS(&lIDXGISurface1));
+
+    if (FAILED(hr)){
+        return;
+    }
+
+    CURSORINFO lCursorInfo = { 0 };
+    lCursorInfo.cbSize = sizeof(lCursorInfo);
+    auto lBoolres = GetCursorInfo(&lCursorInfo);
+
+    if (lBoolres == TRUE){
+        if (lCursorInfo.flags == CURSOR_SHOWING){
+            auto lCursorPosition = lCursorInfo.ptScreenPos;
+            auto lCursorSize = lCursorInfo.cbSize;
+            HDC  lHDC;
+            lIDXGISurface1->GetDC(FALSE, &lHDC);
+
+            DrawIconEx(
+                lHDC,
+                lCursorPosition.x,
+                lCursorPosition.y,
+                lCursorInfo.hCursor,
+                0,
+                0,
+                0,
+                0,
+                DI_NORMAL | DI_DEFAULTSIZE);
+
+            lIDXGISurface1->ReleaseDC(nullptr);
+        }
+
+    }
+
+    // Copy image into CPU access texture
+
+    pContext->CopyResource(lDestImage.Get(), lGDIImage.Get());
+
+
+    // Copy from CPU access texture to bitmap buffer
+    D3D11_MAPPED_SUBRESOURCE resource;
+    //UINT subresource = D3D11CalcSubresource(0, 0, 0);
+    //pContext->Map(lDestImage.Get(), D3D11CalcSubresource(0, 0, 0), D3D11_MAP_READ_WRITE, 0, &resource);
+    hr = pContext->Map(lDestImage.Get(),
+                                D3D11CalcSubresource(0, 0, 0),
+                                D3D11_MAP_READ, 0, &resource);
+    if(FAILED(hr)){
+        return;
+    }
+    odprintf("got screenshot in memory, ready to write.");
+
+    /*
+    BITMAPINFO	lBmpInfo;
+
+    // BMP 32 bpp
+    ZeroMemory(&lBmpInfo, sizeof(BITMAPINFO));
+    lBmpInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    lBmpInfo.bmiHeader.biBitCount = 32;
+    lBmpInfo.bmiHeader.biCompression = BI_RGB;
+    lBmpInfo.bmiHeader.biWidth = lOutputDuplDesc.ModeDesc.Width;
+    lBmpInfo.bmiHeader.biHeight = lOutputDuplDesc.ModeDesc.Height;
+    lBmpInfo.bmiHeader.biPlanes = 1;
+    lBmpInfo.bmiHeader.biSizeImage = lOutputDuplDesc.ModeDesc.Width  * lOutputDuplDesc.ModeDesc.Height * 4;
+
+
+    std::unique_ptr<BYTE> pBuf(new BYTE[lBmpInfo.bmiHeader.biSizeImage]);
+    UINT lBmpRowPitch = lOutputDuplDesc.ModeDesc.Width * 4;
+    BYTE* sptr = reinterpret_cast<BYTE*>(resource.pData);
+    BYTE* dptr = pBuf.get() + lBmpInfo.bmiHeader.biSizeImage - lBmpRowPitch;
+
+    UINT lRowPitch = std::min<UINT>(lBmpRowPitch, resource.RowPitch);
+
+    for (size_t h = 0; h < lOutputDuplDesc.ModeDesc.Height; ++h){
+
+        memcpy_s(dptr, lBmpRowPitch, sptr, lRowPitch);
+        sptr += resource.RowPitch;
+        dptr -= lBmpRowPitch;
+    }
+
+    // Save bitmap buffer into the file ScreenShot.bmp
+    FILE* lfile = nullptr;
+
+    auto lerr = _wfopen_s(&lfile, wfilename, L"wb");
+
+    if (lerr != 0){
+        return;
+    }
+
+    if (lfile != nullptr){
+
+        BITMAPFILEHEADER	bmpFileHeader;
+
+        bmpFileHeader.bfReserved1 = 0;
+        bmpFileHeader.bfReserved2 = 0;
+        bmpFileHeader.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + lBmpInfo.bmiHeader.biSizeImage;
+        bmpFileHeader.bfType = 'MB';
+        bmpFileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+
+        fwrite(&bmpFileHeader, sizeof(BITMAPFILEHEADER), 1, lfile);
+        fwrite(&lBmpInfo.bmiHeader, sizeof(BITMAPINFOHEADER), 1, lfile);
+        fwrite(pBuf.get(), lBmpInfo.bmiHeader.biSizeImage, 1, lfile);
+
+        fclose(lfile);
+
+        //ShellExecute(0, 0, wfilename, 0, 0, SW_SHOW);
+    }
+    */
+    uint64_t imageSize = uint64_t(resource.RowPitch) * uint64_t(desc.Height);
+    if (imageSize > UINT32_MAX)
+    {
+        pContext->Unmap(lDestImage.Get(), 0);
+        return;
+    }
+    odprintf("image size = %lld", (long long)imageSize);
+
+    // because desc.Format is always DXGI_FORMAT_B8G8R8A8_UNORM
+    WICPixelFormatGUID pfGuid = GUID_WICPixelFormat32bppBGRA;
+    WICPixelFormatGUID targetGuid =  GUID_WICPixelFormat24bppBGR;
+    auto pWIC = _GetWIC();
+
+    // Conversion required to write
+    ComPtr<IWICBitmap> source;
+    hr = pWIC->CreateBitmapFromMemory(desc.Width, desc.Height, pfGuid,
+        resource.RowPitch, static_cast<UINT>(imageSize),
+        static_cast<BYTE*>(resource.pData), source.GetAddressOf());
+    if (FAILED(hr))
+    {
+        pContext->Unmap(lDestImage.Get(), 0);
+        return;
+    }
+
+    ComPtr<IWICFormatConverter> FC;
+    hr = pWIC->CreateFormatConverter(FC.GetAddressOf());
+    if (FAILED(hr))
+    {
+        pContext->Unmap(lDestImage.Get(), 0);
+        return;
+    }
+
+    BOOL canConvert = FALSE;
+    hr = FC->CanConvert(pfGuid, targetGuid, &canConvert);
+    if (FAILED(hr) || !canConvert)
+    {
+        odprintf("Can not convert from 32bit BGRA to 24bit BGR");
+        pContext->Unmap(lDestImage.Get(), 0);
+        return;
+    }
+
+    hr = FC->Initialize(source.Get(), targetGuid, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeMedianCut);
+    if (FAILED(hr))
+    {
+        pContext->Unmap(lDestImage.Get(), 0);
+        return;
+    }
+
+    odprintf("Creating stream and prepare jpeg encoder");
+
+    ComPtr<IWICStream> stream;
+    hr = pWIC->CreateStream(stream.GetAddressOf());
+    if (FAILED(hr)){
+        return;
+    }
+
+    hr = stream->InitializeFromFilename(wfilename, GENERIC_WRITE);
+    if (FAILED(hr)){
+        return;
+    }
+
+    //auto_delete_file_wic delonfail(stream, fileName);
+    ComPtr<IWICBitmapEncoder> encoder;
+    hr = pWIC->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, encoder.GetAddressOf());
+    if (FAILED(hr)){
+        return;
+    }
+
+    hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+    if (FAILED(hr)){
+        return;
+    }
+
+    odprintf("Encoder initialized.");
+
+    ComPtr<IWICBitmapFrameEncode> frame;
+    ComPtr<IPropertyBag2> props;
+    hr = encoder->CreateNewFrame(frame.GetAddressOf(), props.GetAddressOf());
+    if (FAILED(hr)){
+        return;
+    }
+
+    hr = frame->Initialize(props.Get());
+    if(FAILED(hr)){
+        odprintf("Could not initialized encoder frame");
+        return;
+    }
+
+    hr = frame->SetSize(desc.Width, desc.Height);
+    if(FAILED(hr)){
+        return;
+    }
+
+    frame->SetResolution(72,72);
+    hr = frame->SetPixelFormat(&targetGuid);
+    if(FAILED(hr)){
+        odprintf("Could not set pixel format");
+    }
+    // Encode WIC metadata
+    ComPtr<IWICMetadataQueryWriter> metawriter;
+    if (SUCCEEDED(frame->GetMetadataQueryWriter(metawriter.GetAddressOf()))){
+        PROPVARIANT value;
+        PropVariantInit(&value);
+
+        value.vt = VT_LPSTR;
+        value.pszVal = const_cast<char*>("DirectXTK");
+
+        // Set Software name
+        (void)metawriter->SetMetadataByName(L"System.ApplicationName", &value);
+        // Set EXIF Colorspace of sRGB
+        value.vt = VT_UI2;
+        value.uiVal = 1;
+        (void)metawriter->SetMetadataByName(L"System.Image.ColorSpace", &value);
+    }
+
+    WICRect rect = { 0, 0, static_cast<INT>(desc.Width), static_cast<INT>(desc.Height) };
+    hr = frame->WriteSource(FC.Get(), &rect);
+
+    pContext->Unmap(lDestImage.Get(), 0);
+
+    if (FAILED(hr)){
+        std::string message = std::system_category().message(hr);
+        odprintf("Could not writeSource:\n%s", message.c_str());
+        return;
+    }
+
+    hr = frame->Commit();
+    if (FAILED(hr)){
+        odprintf("Failed to commit frame");
+        return;
+    }
+
+    hr = encoder->Commit();
+    if (FAILED(hr)){
+        return;
+    }
+
+    //delonfail.clear();
 }
