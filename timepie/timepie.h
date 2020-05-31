@@ -43,6 +43,8 @@
 //#define _WIN32_WINNT _WIN32_WINNT_WIN7
 #include <windows.h>
 #include <tchar.h>
+#include <d3d11.h>
+#include <dxgi1_2.h>
 
 #include <lm.h>
 
@@ -83,9 +85,8 @@ private:
     void saveConfigFile();
     bool getConfigFromFile();
     void authWithWebServer();
-    void captureGameFullScreen(HWND hwnd, QString filename, UINT width, UINT height);
-    void captureGameFullScreen2(HWND hwnd, QString filename, UINT width, UINT height);
-    void captureGameFullScreen3(QString filename);
+    void captureFullScreenDDA(QString filename);
+    void initDDA();
 
     Ui::TMController *ui;
     HWND hwndFound;
@@ -114,6 +115,11 @@ private:
     bool notActive;
     bool configIsOK;
     bool sessionUserIsAdmin;
+    ID3D11Device *dDevice;
+    ID3D11DeviceContext *dContext;
+    IDXGIOutputDuplication* dDeskDup;
+    D3D11_TEXTURE2D_DESC dDesc;
+    bool ddaInitialized;
 };
 
 //! [0]

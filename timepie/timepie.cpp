@@ -8,7 +8,6 @@
 ****************************************************************************/
 
 #include "timepie.h"
-#include "pch.h"
 #include "ui_dialog.h"
 #include "timepieeventfilter.h"
 #include "simplecrypt.h"
@@ -17,29 +16,19 @@
 #include <odprint.h>
 #include <psapi.h> //for GetModuleFileNameEx
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
-// without below 2 lines, will have min/max identifier not found error
-// this is a bug in GdiplusTypes.h, it's reported to be fixed internally at MS, but not released yet
-// 20200527
-// see: https://developercommunity.visualstudio.com/content/problem/727770/gdiplustypesh-does-not-compile-with-nominmax.html
-using std::min;
-using std::max;
 #include <wrl.h>
 #include <wincodec.h>
 #include <Wingdi.h>
-#include <gdiplus.h>
-#include <d3d11.h>
-#include <dxgi.h>
+//#include <d3d11.h>
+//#include <dxgi.h>
 #include <KnownFolders.h>
 #include <shellapi.h>
-//#include <comdef.h>
 #include <system_error>
 #include <ScreenGrab.h>
 #include <WICTextureLoader.h>
-//#include <DirectXHelpers.h>
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
-#pragma comment (lib, "Gdiplus.lib")
-using namespace Gdiplus;
+
 using namespace Microsoft::WRL;
 using namespace DirectX;
 
@@ -52,12 +41,14 @@ namespace DirectX
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
 bool IsUserAdmin(wchar_t *uname);
-int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
 SimpleCrypt crypto(Q_UINT64_C(0xa0f1608c385c24a9));
 
 //! [0]
-TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
+TimePie::TimePie(QWidget *parent):
+    QDialog(parent),
+    ui(new Ui::TMController),
+    ddaInitialized(false)
 {
     /*
      * session username
@@ -186,7 +177,7 @@ TimePie::TimePie(QWidget *parent): QDialog(parent),  ui(new Ui::TMController)
 
     //try to take a screenshot every minute
     minuteTimer = new QTimer();
-    minuteTimer->setInterval(60000);
+    minuteTimer->setInterval(30000);
     connect(minuteTimer,SIGNAL(timeout()),this,SLOT(shootScreen()));
     minuteTimer->start();
     
@@ -374,139 +365,129 @@ void TimePie::shootScreen()
     QString fileName = QString("%1\\%2.jpg").arg(screenshotPath).arg(currentTime.toTime_t());
     int img_quality = 25;  //default -1, 0:small compressed, 100:large uncompressed
 
-    //see: http://doc.qt.nokia.com/4.7/desktop-screenshot-screenshot-cpp.html
-    QPixmap originalPixmap = QPixmap(); // clear image for low memory situations on embedded devices.
-
     HWND iHwndForegroundWindow = GetForegroundWindow();
+    if(!iHwndForegroundWindow){
+        odprintf("Could not get foreground window");
+        return;
+    }
 
-    if(iHwndForegroundWindow){
-        //Get active window title,
-        //if active window is a browser, it will be html doc title
-        LPTSTR appTitle = new TCHAR[1023];
-        GetWindowText(iHwndForegroundWindow,appTitle,1024);
-        if(appTitle!=NULL){
-            currentWindowTitle = QString::fromUtf16( (ushort*)appTitle );
-		}
-        odprintf("foregroundWindow: %s",  currentWindowTitle.toStdString().c_str());
+    //Get active window title,
+    //if active window is a browser, it will be html doc title
+    LPTSTR appTitle = new TCHAR[1023];
+    GetWindowText(iHwndForegroundWindow, appTitle, 1024);
+    if(appTitle!=NULL){
+        currentWindowTitle = QString::fromUtf16( (ushort*)appTitle );
+    }
+    odprintf("foregroundWindow: %s",  currentWindowTitle.toStdString().c_str());
 
-        //Get active window application filename
-        //e.g. if active window is firefox, it will be "firefox.exe"
-        TCHAR *appName = new TCHAR[512];  // for GetModuleFileNameExW
-        DWORD procId=0;
-        GetWindowThreadProcessId(iHwndForegroundWindow,&procId);
+    //Get active window application filename
+    //e.g. if active window is firefox, it will be "firefox.exe"
+    TCHAR *appName = new TCHAR[512];  // for GetModuleFileNameExW
+    DWORD procId=0;
+    GetWindowThreadProcessId(iHwndForegroundWindow,&procId);
 
-        HANDLE handle = OpenProcess(1040, 0, procId);
-        //PROCESS_QUERY_INFORMATION(0x400)|PROCESS_VM_READ(0x10)=0x410=1040
+    HANDLE handle = OpenProcess(1040, 0, procId);
+    //PROCESS_QUERY_INFORMATION(0x400)|PROCESS_VM_READ(0x10)=0x410=1040
 
-        if(handle){
-            if(::GetModuleFileNameExW(handle,NULL,appName,512)){
-                currentApplicationName = QString::fromUtf16( (ushort*)appName );
-            }
+    if(handle){
+        if(::GetModuleFileNameExW(handle,NULL,appName,512)){
+            currentApplicationName = QString::fromUtf16( (ushort*)appName );
         }
-        CloseHandle(handle);
-        delete[] appName;
-        //qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
+    }
+    CloseHandle(handle);
+    delete[] appName;
+    //qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
 
-        if(currentApplicationName!=lastApplicationName || currentWindowTitle!=lastWindowTitle){
-            if(db.open()){
-                QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
+    if(currentApplicationName==lastApplicationName && currentWindowTitle==lastWindowTitle){
+        return;
+    }
+
+    if(db.open()){
+        QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
                                  .arg(currentTime.toTime_t())
                                  .arg(sessionUsername)
                                  .arg(currentApplicationName)
                                  .arg(currentWindowTitle)
                                  .arg(1);
-                //qDebug()<<sqlstr.toUtf8().data();
-                odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
+        //qDebug()<<sqlstr.toUtf8().data();
+        odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
 
-				QSqlQuery query = QSqlQuery(db);
-				bool ret = query.exec(sqlstr);
-
-                if (ret){
-                    odprintf(" -> success");
-                    //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
-				}else{
+        QSqlQuery query = QSqlQuery(db);
+        bool ret = query.exec(sqlstr);
+        if (ret){
+            odprintf(" -> success");
+            //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
+        }else{
                     odprintf(" -> insert failed");
-				}
-                db.close();
-            }
-            QUERY_USER_NOTIFICATION_STATE pquns;
-            SHQueryUserNotificationState(&pquns);
-            if(pquns == QUNS_BUSY){
-                // youtube fullscreen etc.
-                odprintf("QUNS_BUSY");
-            }else if(pquns == QUNS_RUNNING_D3D_FULL_SCREEN){
-                // game such as: Minecraft
-                odprintf("QUNS_RUNNING_D3D_FULL_SCREEN");
-            }
-
-            MONITORINFO monitorInfo;
-            monitorInfo.cbSize = sizeof (MONITORINFO);
-            GetMonitorInfoW(MonitorFromWindow(iHwndForegroundWindow, MONITOR_DEFAULTTOPRIMARY), &monitorInfo);
-            LPRECT lpRect=new RECT();
-            bool gotRect = GetWindowRect(iHwndForegroundWindow, lpRect);
-            if(gotRect){
-                odprintf("rect left, right, top, bottom = %d, %d, %d, %d",
-                         lpRect->left,
-                         lpRect->right,
-                         lpRect->top,
-                         lpRect->bottom);
-                odprintf("monitor left, right, top, bottom = %d, %d, %d, %d",
-                         monitorInfo.rcMonitor.left,
-                         monitorInfo.rcMonitor.right,
-                         monitorInfo.rcMonitor.top,
-                         monitorInfo.rcMonitor.bottom);
-                bool isFullScreen = (lpRect->left == monitorInfo.rcMonitor.left
-                                     && lpRect->right == monitorInfo.rcMonitor.right
-                                     && lpRect->top == monitorInfo.rcMonitor.top
-                                     && lpRect->bottom == monitorInfo.rcMonitor.bottom);
-                if(isFullScreen){
-                    odprintf("fullscreen mode detected!");
-                    QFrame *qwg = new QFrame;
-                    //QWidget *qwg = new QWidget;
-                    HWND hwnd = (HWND)qwg->winId();
-                    captureGameFullScreen2(hwnd,
-                                          fileName,
-                                          lpRect->right - lpRect->left,
-                                          lpRect->bottom - lpRect->top);
-                    delete qwg;
-                    captureGameFullScreen3(fileName);
-                }else{
-                    originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
-                                                        lpRect->left,
-                                                        lpRect->top,
-                                                        lpRect->right - lpRect->left + 1,
-                                                        lpRect->bottom - lpRect->top + 1);
-                }
-            }else{
-                //This works, but it only grab the pane, not window,
-                //i.e. no outer frame, not menu, status.
-                originalPixmap = screen->grabWindow((WId)iHwndForegroundWindow);
-            }
         }
-    }else{
-        odprintf("Could not get foreground window");
+        db.close();
     }
 
+    unsigned int fullscreenStatus = 0;
+    QUERY_USER_NOTIFICATION_STATE pquns;
+    SHQueryUserNotificationState(&pquns);
+    // https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state
+    if(pquns == QUNS_BUSY){
+        // youtube, powerpoint fullscreen
+        odprintf("QUNS_BUSY");
+        fullscreenStatus = 1;
+    }else if(pquns == QUNS_RUNNING_D3D_FULL_SCREEN){
+        // game such as: Minecraft, LOL
+        odprintf("QUNS_RUNNING_D3D_FULL_SCREEN");
+        fullscreenStatus = 2;
+    }
 
+    RECT rect;
+    if(GetWindowRect(iHwndForegroundWindow, &rect)){
+        odprintf("rect left, right, top, bottom = %d, %d, %d, %d",
+                 rect.left, rect.right, rect.top, rect.bottom);
 
-    /*
-	//old debug stuff, don't delete
-    QString initialPath = QDir::currentPath() + tr("/untitled.") + format;
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save As"),
-                                            initialPath,
-                                            tr("%1 Files (*.%2);;All Files (*)")
-                                            .arg(format.toUpper())
-                                            .arg(format));
-    */
-    //QString fileName = QString("%1/%2.%3").arg(appDataDir).arg(currentTime.currentMSecsSinceEpoch()).arg(format);
+    }
+    MONITORINFO monitorInfo;
+    monitorInfo.cbSize = sizeof (MONITORINFO);
+    if(GetMonitorInfoW(MonitorFromWindow(iHwndForegroundWindow, MONITOR_DEFAULTTOPRIMARY), &monitorInfo)){
+        odprintf("monitor left, right, top, bottom = %d, %d, %d, %d",
+                 monitorInfo.rcMonitor.left,
+                 monitorInfo.rcMonitor.right,
+                 monitorInfo.rcMonitor.top,
+                 monitorInfo.rcMonitor.bottom);
+    }
 
+    if(!fullscreenStatus && rect.right && monitorInfo.rcMonitor.right){
+        if(rect.left == monitorInfo.rcMonitor.left
+           && rect.right == monitorInfo.rcMonitor.right
+           && rect.top == monitorInfo.rcMonitor.top
+           && rect.bottom == monitorInfo.rcMonitor.bottom){
+            // Roblox fullscreen etc.
+            fullscreenStatus = 3;
+        }
+    }
 
-	//todo: sometimes have null pixmap, investigate
-    if (!originalPixmap.isNull()){
-        //save original size
-        originalPixmap.save(fileName, "jpg", img_quality);
-		//save half size
-		//originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
+    if(fullscreenStatus){
+        // TODO: fullscreenStatus 1/2 call different capture methods
+        odprintf("fullscreen mode detected: %d", fullscreenStatus);
+        captureFullScreenDDA(fileName);
+    }else{
+        //https://doc.qt.io/archives/qt-4.8/qt-desktop-screenshot-screenshot-cpp.html
+        QPixmap originalPixmap = QPixmap();
+        if(rect.right){
+            originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
+                                                rect.left,
+                                                rect.top,
+                                                rect.right - rect.left + 1,
+                                                rect.bottom - rect.top + 1);
+
+        }else{
+            //This works, but it only grab the pane, not window,
+            //i.e. no outer frame, not menu, status.
+            originalPixmap = screen->grabWindow((WId)iHwndForegroundWindow);
+        }
+
+        if (!originalPixmap.isNull()){
+            originalPixmap.save(fileName, "jpg", img_quality);
+            //save half size
+            //originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
+        }
     }
 
     lastWindowTitle = currentWindowTitle;
@@ -715,551 +696,210 @@ bool IsUserAdmin(wchar_t* uname){
     return result;
 }
 
-int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
+void TimePie::initDDA()
 {
-   UINT  num = 0;          // number of image encoders
-   UINT  size = 0;         // size of the image encoder array in bytes
-
-   ImageCodecInfo* pImageCodecInfo = NULL;
-   GetImageEncodersSize(&num, &size);
-   if(size == 0)
-      return -1;  // Failure
-
-   pImageCodecInfo = (ImageCodecInfo*)(malloc(size));
-   if(pImageCodecInfo == NULL)
-      return -1;  // Failure
-
-   GetImageEncoders(num, size, pImageCodecInfo);
-
-   for(UINT j = 0; j < num; ++j)
-   {
-      if( wcscmp(pImageCodecInfo[j].MimeType, format) == 0 )
-      {
-         *pClsid = pImageCodecInfo[j].Clsid;
-         free(pImageCodecInfo);
-         return j;  // Success
-      }
-   }
-   free(pImageCodecInfo);
-   return -1;  // Failure
-}
-
-void TimePie::captureGameFullScreen(HWND hWnd, QString filename, UINT width, UINT height){
-    //wchar_t *filenameL = new wchar_t[filename.length() + 1];
-    //filename.toWCharArray(filenameL);
-    //filenameL[filename.length()] = 0;
-    const wchar_t *wfilename = filename.toStdWString().c_str();
-
-    /*
-    Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
-    if(FAILED(initialize)){
-        odprintf("Failed to initialize");
-    }*/
-
-    // create Factory, must be IDXGIFactory2 for CreateSwapChainForHwnd method
-    ComPtr<IDXGIFactory2> m_dxgiFactory;
-    DX::ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(m_dxgiFactory.ReleaseAndGetAddressOf())));
-
-    ComPtr<IDXGIAdapter1> adapter;
-    for (UINT adapterIndex = 0;
-                SUCCEEDED(m_dxgiFactory->EnumAdapters1(
-                    adapterIndex,
-                    adapter.ReleaseAndGetAddressOf()));
-                adapterIndex++)
-    {
-        DXGI_ADAPTER_DESC1 desc;
-        DX::ThrowIfFailed(adapter->GetDesc1(&desc));
-        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE){
-            // Don't select the Basic Render Driver adapter.
-            continue;
-        }
-        //qDebug() << "Direct3D Adapter " << adapterIndex << ": VID:" << desc.VendorId << ", PID:" << desc.DeviceId << " - " << desc.Description;
-        odprintf("device: %ls", desc.Description);
-        break;
-    }
-    if(!adapter){
+    if(ddaInitialized){
         return;
-        //qDebug() << "no Direct3D hardware adapter found";
-        //TODO: use gdi
     }
-    odprintf("factory and adapter created");
+    odprintf("Start initializing DDA");
 
+    dDevice = nullptr;
+    dContext = nullptr;
+    dDeskDup = nullptr;
 
-    //UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    UINT creationFlags = 0;
-#ifdef QT_DEBUG
-    creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
-    static const D3D_FEATURE_LEVEL featureLevels[] ={
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_1,
-        D3D_FEATURE_LEVEL_10_0,
-        D3D_FEATURE_LEVEL_9_3,
-        D3D_FEATURE_LEVEL_9_2,
-        D3D_FEATURE_LEVEL_9_1,
-    };
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> context;
-    D3D_FEATURE_LEVEL  m_d3dFeatureLevel;
+    HRESULT hr(E_FAIL);
 
-    HRESULT hr = D3D11CreateDevice(
-        adapter.Get(),
-        D3D_DRIVER_TYPE_UNKNOWN,
-        nullptr,
-        creationFlags,
-        featureLevels,
-        ARRAYSIZE(featureLevels),
-        D3D11_SDK_VERSION,
-        device.GetAddressOf(),  // Returns the Direct3D device created.
-        &m_d3dFeatureLevel,     // Returns feature level of device created.
-        context.GetAddressOf()  // Returns the device immediate context.
-    );
+    D3D_FEATURE_LEVEL gFeatureLevels =  D3D_FEATURE_LEVEL_11_0;
+    D3D_FEATURE_LEVEL lFeatureLevel;
+    // Create device
+    hr = D3D11CreateDevice(nullptr,
+                D3D_DRIVER_TYPE_HARDWARE,
+                nullptr,
+                0,
+                &gFeatureLevels,
+                1,
+                D3D11_SDK_VERSION,
+                &dDevice,
+                &lFeatureLevel,
+                &dContext);
 
+    if (dDevice == nullptr){
+        odprintf("Could not create device");
+    }
+    // Get DXGI device
+    ComPtr<IDXGIDevice> lDxgiDevice;
+    hr = dDevice->QueryInterface(IID_PPV_ARGS(&lDxgiDevice));
     if (FAILED(hr)){
-        // If the initialization fails, fall back to the WARP device.
-        // For more information on WARP, see:
-        // http://go.microsoft.com/fwlink/?LinkId=286690
-        hr = D3D11CreateDevice(
-            nullptr,
-            D3D_DRIVER_TYPE_WARP, // Create a WARP device instead of a hardware device.
-            nullptr,
-            creationFlags,
-            featureLevels,
-            _countof(featureLevels),
-            D3D11_SDK_VERSION,
-            device.GetAddressOf(),
-            &m_d3dFeatureLevel,
-            context.GetAddressOf()
-        );
-
-        if (FAILED(hr)){
-            odprintf("Could not created d3d device");
-            return;
-        }
-    }else{
-        odprintf("hardware CreateDevice successful");
-    }
-
-
-    ComPtr<ID3D11Device1> m_d3dDevice;
-    ComPtr<ID3D11DeviceContext1> m_d3dContext;
-    ComPtr<ID3DUserDefinedAnnotation> m_d3dAnnotation;
-    DX::ThrowIfFailed(device.As(&m_d3dDevice));
-    DX::ThrowIfFailed(context.As(&m_d3dContext));
-    DX::ThrowIfFailed(context.As(&m_d3dAnnotation));
-    odprintf("d3d device and context are created.");
-
-    ComPtr<IDXGISwapChain1> m_swapChain;
-
-    DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
-    ZeroMemory(&swapChainDesc, sizeof(swapChainDesc));
-    swapChainDesc.Width = width;
-    swapChainDesc.Height = height;
-    swapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // this is the most common swapchain format
-    swapChainDesc.Stereo = false;
-    swapChainDesc.SampleDesc.Count = 1; // don't use multi-sampling
-    swapChainDesc.SampleDesc.Quality = 0;
-    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapChainDesc.BufferCount = 2; // use double buffering to enable flip
-    swapChainDesc.Scaling = DXGI_SCALING_NONE;
-    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
-    swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO;
-
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullScreenDesc;
-    ZeroMemory(&fullScreenDesc, sizeof(fullScreenDesc));
-    fullScreenDesc.RefreshRate.Numerator = 60;
-    fullScreenDesc.RefreshRate.Denominator = 1;
-    fullScreenDesc.Windowed = FALSE;
-
-    hr = m_dxgiFactory->CreateSwapChainForHwnd(device.Get(),
-                                               hWnd,
-                                               &swapChainDesc,
-                                               &fullScreenDesc,
-                                               nullptr,
-                                               &m_swapChain);
-    if(FAILED(hr)){
-        odprintf("Could not create swap chain");
+        odprintf("Could not cat DXGI device");
         return;
     }
 
-    BOOL isFullscreen = FALSE;
-    m_swapChain->GetFullscreenState(&isFullscreen, nullptr);
-
-    ComPtr<ID3D11Texture2D> backBuffer;
-    hr = m_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<LPVOID*>(backBuffer.GetAddressOf()));
-    if(SUCCEEDED(hr)){
-        hr = SaveWICTextureToFile(context.Get(), backBuffer.Get(), GUID_ContainerFormatJpeg, wfilename);
+    // Get DXGI adapter
+    ComPtr<IDXGIAdapter> lDxgiAdapter;
+    hr = lDxgiDevice->GetParent(IID_PPV_ARGS(&lDxgiAdapter));
+    if (FAILED(hr)){
+        odprintf("Could not cat DXGI adapter");
+        return;
     }
-    DX::ThrowIfFailed(hr);
-    return;
-#ifdef WILLTRYTHIS
-    //https://www.codeproject.com/Articles/5051/Various-methods-for-capturing-the-screen
-    int nScreenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int nScreenHeight = GetSystemMetrics(SM_CYSCREEN);
-    HWND hDesktopWnd = GetDesktopWindow();
-    HDC hDesktopDC = GetDC(hDesktopWnd);
-    HDC hCaptureDC = CreateCompatibleDC(hDesktopDC);
-    HBITMAP hCaptureBitmap =CreateCompatibleBitmap(hDesktopDC,
-                            nScreenWidth, nScreenHeight);
-    SelectObject(hCaptureDC,hCaptureBitmap);
-    BitBlt(hCaptureDC,0,0,nScreenWidth,nScreenHeight,
-           hDesktopDC,0,0,SRCCOPY|CAPTUREBLT);
-    SaveCapturedBitmap(hCaptureBitmap); //Place holder - Put your code
-                                //here to save the captured image to disk
-    ReleaseDC(hDesktopWnd,hDesktopDC);
-    DeleteDC(hCaptureDC);
-    DeleteObject(hCaptureBitmap);
-#else
-    //https://stackoverflow.com/questions/3291167/how-can-i-take-a-screenshot-in-a-windows-application
-    int x1, y1, x2, y2, w, h;
+    lDxgiDevice.Reset();
 
-    // get screen dimensions
-    x1  = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    y1  = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    x2  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    y2  = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    w   = x2 - x1;
-    h   = y2 - y1;
-
-    // copy screen to bitmap
-    // get device context of the screen
-    HDC     hScreen = GetDC(NULL);
-    // a device context to put it in
-    HDC     hDC     = CreateCompatibleDC(hScreen);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, w, h);
-    HGDIOBJ old_obj = SelectObject(hDC, hBitmap);
-    BOOL    bRet    = BitBlt(hDC, 0, 0, w, h, hScreen, x1, y1, SRCCOPY);
-
-    //use gdi plus to save to png file
-    GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
-    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
-
-    Bitmap *image = new Bitmap(hBitmap, NULL);
-    CLSID myClsId;
-    GetEncoderClsid(L"image/png", &myClsId);
-    image->Save(L"hello.png", &myClsId, NULL);
-    delete image;
-    GdiplusShutdown(gdiplusToken);
-
-
-    // clean up
-    SelectObject(hDC, old_obj);
-    DeleteDC(hDC);
-    ReleaseDC(NULL, hScreen);
-    DeleteObject(hBitmap);
-#endif
-}
-
-void TimePie::captureGameFullScreen2(HWND hWnd, QString filename, UINT width, UINT height){
-    wchar_t *wfilename = new wchar_t[filename.length() + 1];
-    filename.toWCharArray(wfilename);
-    wfilename[filename.length()] = 0;
+    // Get output
+    UINT Output = 0;
+    ComPtr<IDXGIOutput> lDxgiOutput;
+    hr = lDxgiAdapter->EnumOutputs(Output, &lDxgiOutput);
+    if (FAILED(hr)){
+        odprintf("Could not cat DXGI output");
+        return;
+    }
 
     /*
-    Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
-    if(FAILED(initialize)){
-        odprintf("Failed to initialize");
-    }*/
-
-    // reference:
-    //   https://walbourn.github.io/anatomy-of-direct3d-11-create-device/
-
-    UINT creationFlags = 0;
-#ifdef QT_DEBUG
-    creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
-    static const D3D_FEATURE_LEVEL featureLevels[] ={
-        D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
-        D3D_FEATURE_LEVEL_9_3, D3D_FEATURE_LEVEL_9_2, D3D_FEATURE_LEVEL_9_1};
-
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> context;
-    D3D_FEATURE_LEVEL  m_d3dFeatureLevel;
-
-    HRESULT hr = D3D11CreateDevice(nullptr,
-                                   D3D_DRIVER_TYPE_HARDWARE,
-                                   nullptr,
-                                   creationFlags,
-                                   featureLevels,
-                                   _countof(featureLevels),
-                                   D3D11_SDK_VERSION,
-                                   &device,
-                                   &m_d3dFeatureLevel,
-                                   &context);
-
-    if(hr == E_INVALIDARG){
-        hr = D3D11CreateDevice(nullptr,
-                               D3D_DRIVER_TYPE_HARDWARE,
-                            nullptr,
-                            creationFlags,
-                            &featureLevels[1],
-                            _countof(featureLevels) - 1,
-                            D3D11_SDK_VERSION,
-                            &device,
-                            &m_d3dFeatureLevel,
-                            &context);
+    DXGI_OUTPUT_DESC lOutputDesc;
+    hr = lDxgiOutput->GetDesc(&lOutputDesc);
+    if (FAILED(hr)){
+        return false;
     }
+    */
+    lDxgiAdapter.Reset();
 
-    odprintf("level_11_0=%d, got level=%d",
-             (int)D3D_FEATURE_LEVEL_11_0, (int)m_d3dFeatureLevel);
-    if(m_d3dFeatureLevel < D3D_FEATURE_LEVEL_11_0){
+    ComPtr<IDXGIOutput1> lDxgiOutput1;
+    hr = lDxgiOutput->QueryInterface(IID_PPV_ARGS(&lDxgiOutput1));
+    if (FAILED(hr)){
+        odprintf("Could not cat DXGI output 1");
         return;
     }
+    lDxgiOutput.Reset();
 
-    ComPtr<ID3D11Device1> m_d3dDevice;
-    ComPtr<ID3D11DeviceContext1> m_d3dContext;
-    DX::ThrowIfFailed(device.As(&m_d3dDevice));
-    DX::ThrowIfFailed(context.As(&m_d3dContext));
-    odprintf("d3d device and context are created.");
-
-    ComPtr<IDXGIDevice> dxgiDevice;
-    //ComPtr<IDXGIAdapter> dxgiAdapter;
-    ComPtr<IDXGIAdapter2> dxgiAdapter2;
-    //ComPtr<IDXGIFactory1> dxgiFactory1;
-    ComPtr<IDXGIFactory2> dxgiFactory2;
-
-    DX::ThrowIfFailed(device.As(&dxgiDevice));
-    //dxgiDevice->GetAdapter(&dxgiAdapter);
-    //dxgiAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory1));
-    //DX::ThrowIfFailed(dxgiFactory1.As(&dxgiFactory2));
-    //dxgiAdapter2->GetParent(IID_PPV_ARGS(&dxgiFactory1));
-    dxgiDevice->GetParent(IID_PPV_ARGS(&dxgiAdapter2));
-    dxgiAdapter2->GetParent(IID_PPV_ARGS(&dxgiFactory2));
-
-    ComPtr<IDXGISwapChain1> m_swapChain;
-
-    DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
-    ZeroMemory(&swapChainDesc, sizeof(swapChainDesc));
-    swapChainDesc.Width = width;
-    swapChainDesc.Height = height;
-    swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // this is the most common swapchain format
-    swapChainDesc.Stereo = false;
-    swapChainDesc.SampleDesc.Count = 1; // don't use multi-sampling
-    swapChainDesc.SampleDesc.Quality = 0;
-    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapChainDesc.BufferCount = 2; // use double buffering to enable flip
-    swapChainDesc.Scaling = DXGI_SCALING_NONE;
-    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-    swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-    swapChainDesc.Flags = 0;
-
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullScreenDesc;
-    ZeroMemory(&fullScreenDesc, sizeof(fullScreenDesc));
-    fullScreenDesc.RefreshRate.Numerator = 60;
-    fullScreenDesc.RefreshRate.Denominator = 1;
-    //fullScreenDesc.Windowed = FALSE;
-    fullScreenDesc.Windowed = TRUE;
-
-    //ComPtr<IUnknown> unknownDev;
-    //DX::ThrowIfFailed(device.As(&unknownDev));
-    hr = dxgiFactory2->CreateSwapChainForHwnd(device.Get(),
-                                               hWnd,
-                                               &swapChainDesc,
-                                               &fullScreenDesc,
-                                               nullptr,
-                                               &m_swapChain);
-    if(FAILED(hr)){
+    // Create desktop duplication
+    hr = lDxgiOutput1->DuplicateOutput(dDevice, &dDeskDup);
+    if (FAILED(hr)){
         std::string message = std::system_category().message(hr);
-        odprintf("Could not create swap chain: %s", message.c_str());
+        odprintf("Could not create DD output:\n%s", message.c_str());
         return;
     }
+    lDxgiOutput1.Reset();
 
-    BOOL isFullscreen = FALSE;
-    m_swapChain->GetFullscreenState(&isFullscreen, nullptr);
+    DXGI_OUTDUPL_DESC lOutputDuplDesc;
+    // Create GUI drawing texture
+    dDeskDup->GetDesc(&lOutputDuplDesc);
 
-    ComPtr<ID3D11Texture2D> backBuffer;
-    hr = m_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<LPVOID*>(backBuffer.GetAddressOf()));
-    if(SUCCEEDED(hr)){
-        odprintf("Trying to save to: %ls", wfilename);
-        hr = SaveWICTextureToFile(context.Get(), backBuffer.Get(), GUID_ContainerFormatJpeg, wfilename);
-        if(FAILED(hr)){
-            std::string message = std::system_category().message(hr);
-            odprintf("Could not SaveWICTextureToFile:\n%s", message.c_str());
-        }
-    }else{
-        odprintf("Could not swapChain->GetBuffer.");
-    }
+
+    dDesc.Width = lOutputDuplDesc.ModeDesc.Width;
+    dDesc.Height = lOutputDuplDesc.ModeDesc.Height;
+    // this should always be DXGI_FORMAT_B8G8R8A8_UNORM
+    //https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api
+    dDesc.Format = lOutputDuplDesc.ModeDesc.Format;
+    dDesc.ArraySize = 1;
+    //dDesc.BindFlags = D3D11_BIND_FLAG::D3D11_BIND_RENDER_TARGET;
+    dDesc.BindFlags = 0;
+    //dDesc.MiscFlags = D3D11_RESOURCE_MISC_GDI_COMPATIBLE;
+    dDesc.MiscFlags = 0;
+    dDesc.SampleDesc.Count = 1;
+    dDesc.SampleDesc.Quality = 0;
+    dDesc.MipLevels = 1;
+    dDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    //dDesc.Usage = D3D11_USAGE_DEFAULT; // read/write
+    dDesc.Usage = D3D11_USAGE_STAGING; //support transfer/copy from GPU to CPU
+
+    odprintf("DDA initiallized");
+    ddaInitialized = true;
 }
 
 /*
  * Screen capture using Windows Desktop Duplication API
  * largely based on: https://www.codeproject.com/Tips/1116253/Desktop-screen-capture-on-Windows-via-Windows-Desk
  * save to jpg see: https://github.com/microsoft/DirectXTK/blob/master/Src/ScreenGrab.cpp
- *
+ * also: https://stackoverflow.com/questions/51613903/desktopduplication-api-produces-black-frames-while-certain-applications-are-in-f
+ * and: https://stackoverflow.com/questions/46145057/desktop-duplication-directx-screen-capture-fails-to-deliver-screen-updates
+ * and: https://github.com/sskodje/ScreenRecorderLib - internal_recorder.cpp
  */
-void TimePie::captureGameFullScreen3(QString filename)
+void TimePie::captureFullScreenDDA(QString filename)
 {
     wchar_t *wfilename = new wchar_t[filename.length() + 1];
     filename.toWCharArray(wfilename);
     wfilename[filename.length()] = 0;
     const bool catchCursor = false;
 
-    ComPtr<ID3D11Device> lDevice;
-    ComPtr<ID3D11DeviceContext> pContext;
-    IDXGIOutputDuplication* deskDup;
-    D3D11_TEXTURE2D_DESC desc;
+    //ComPtr<ID3D11Device> lDevice;
+    //ComPtr<ID3D11DeviceContext> pContext;
+    //IDXGIOutputDuplication* deskDup;
+    //D3D11_TEXTURE2D_DESC desc;
+
     ComPtr<ID3D11Texture2D> lGDIImage;
     ComPtr<ID3D11Texture2D> lDestImage;
-    DXGI_OUTPUT_DESC lOutputDesc;
 
-    D3D_FEATURE_LEVEL lFeatureLevel;
     HRESULT hr(E_FAIL);
 
-    auto initDDA = [&](){
-        D3D_FEATURE_LEVEL gFeatureLevels =  D3D_FEATURE_LEVEL_11_0;
-        // Create device
-        hr = D3D11CreateDevice(nullptr,
-                    D3D_DRIVER_TYPE_HARDWARE,
-                    nullptr,
-                    0,
-                    &gFeatureLevels,
-                    1,
-                    D3D11_SDK_VERSION,
-                    &lDevice,
-                    &lFeatureLevel,
-                    &pContext);
-
-        if (lDevice == nullptr){
-            return false;
-        }
-        // Get DXGI device
-        ComPtr<IDXGIDevice> lDxgiDevice;
-        hr = lDevice->QueryInterface(IID_PPV_ARGS(&lDxgiDevice));
-        if (FAILED(hr)){
-            return false;
-        }
-
-        // Get DXGI adapter
-        ComPtr<IDXGIAdapter> lDxgiAdapter;
-        hr = lDxgiDevice->GetParent(IID_PPV_ARGS(&lDxgiAdapter));
-        if (FAILED(hr)){
-            return false;
-        }
-        lDxgiDevice.Reset();
-
-        // Get output
-        UINT Output = 0;
-        ComPtr<IDXGIOutput> lDxgiOutput;
-        hr = lDxgiAdapter->EnumOutputs(Output, &lDxgiOutput);
-        if (FAILED(hr)){
-            return false;
-        }
-
-        hr = lDxgiOutput->GetDesc(&lOutputDesc);
-        if (FAILED(hr)){
-            return false;
-        }
-        lDxgiAdapter.Reset();
-
-        ComPtr<IDXGIOutput1> lDxgiOutput1;
-        hr = lDxgiOutput->QueryInterface(IID_PPV_ARGS(&lDxgiOutput1));
-        if (FAILED(hr)){
-            return false;
-        }
-        lDxgiOutput.Reset();
-
-        // Create desktop duplication
-        hr = lDxgiOutput1->DuplicateOutput(lDevice.Get(), &deskDup);
-        if (FAILED(hr)){
-            return false;
-        }
-        lDxgiOutput1.Reset();
-
-        DXGI_OUTDUPL_DESC lOutputDuplDesc;
-        // Create GUI drawing texture
-        deskDup->GetDesc(&lOutputDuplDesc);
-
-
-        desc.Width = lOutputDuplDesc.ModeDesc.Width;
-        desc.Height = lOutputDuplDesc.ModeDesc.Height;
-        // this should always be DXGI_FORMAT_B8G8R8A8_UNORM
-        //https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api
-        desc.Format = lOutputDuplDesc.ModeDesc.Format;
-        desc.ArraySize = 1;
-        //desc.BindFlags = D3D11_BIND_FLAG::D3D11_BIND_RENDER_TARGET;
-        desc.BindFlags = 0;
-        //desc.MiscFlags = D3D11_RESOURCE_MISC_GDI_COMPATIBLE;
-        desc.MiscFlags = 0;
-        desc.SampleDesc.Count = 1;
-        desc.SampleDesc.Quality = 0;
-        desc.MipLevels = 1;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        //desc.Usage = D3D11_USAGE_DEFAULT; // read/write
-        desc.Usage = D3D11_USAGE_STAGING; //support transfer/copy from GPU to CPU
-        return true;
-
-    };
-
-    if(!initDDA()){
-        odprintf("Could not initialize DDA");
+    initDDA();
+    if(ddaInitialized == false){
         return;
     }
-
-
 
     ComPtr<IDXGIResource> lDesktopResource;
     DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
-    ComPtr<ID3D11Texture2D> lAcquiredDesktopImage;
-    DWORD startTicks = GetTickCount();
-    int attempted = 0;
-
-    do{
-        deskDup->ReleaseFrame();
-        hr = deskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
-        if(FAILED(hr)){
-            if (hr == DXGI_ERROR_ACCESS_LOST) {
-                // Access may be lost when changing from/to fullscreen mode(any application);
-                // when this happens we need to reaquirce the outputdup
-                deskDup->ReleaseFrame();
-                deskDup->Release();
-                deskDup = nullptr;
-                if(initDDA()){
-                    hr = deskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
-                    if(FAILED(hr)){
-                        return;
-                    }
-                }else{
-                    return;
-                }
-            }
-            if(FAILED(hr)){
+    hr = dDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
+    if(FAILED(hr)){
+        std::string message = std::system_category().message(hr);
+        odprintf("AcquireNextFrame failed: 0X%08lx\n%s", hr, message.c_str());
+        if (hr == DXGI_ERROR_ACCESS_LOST || hr == DXGI_ERROR_INVALID_CALL) {
+            // Access may be lost when changing from/to fullscreen mode(any application);
+            // when this happens we need to reaquirce the outputdup
+            //dDeskDup->ReleaseFrame();
+            odprintf("DXGI ACCESS_LOST/INVALID_CALL - trying to re-init DDA");
+            ddaInitialized = false;
+            initDDA();
+            if(!ddaInitialized){
                 return;
             }
         }
-        attempted++;
-        if(GetTickCount() - startTicks > 2000){
-            odprintf("Timed out after %d attempts", attempted);
-        }
-
-    } while(lFrameInfo.TotalMetadataBufferSize <= 0 ||
-            lFrameInfo.LastPresentTime.QuadPart <= 0);
+        DWORD startTicks = GetTickCount();
+        int attempted = 0;
+        do{
+            dDeskDup->ReleaseFrame();
+            hr = dDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
+            if(FAILED(hr)){
+                if (hr == DXGI_ERROR_ACCESS_LOST) {
+                    // this should not happen but just in case
+                    odprintf("DXGI_ERROR_ACCESS_LOST - trying to re-init DDA");
+                    ddaInitialized = false;
+                    initDDA();
+                    if(!ddaInitialized){
+                        return;
+                    }
+                }
+            }
+            attempted++;
+            if(GetTickCount() - startTicks > 2000){
+                odprintf("Timed out after %d attempts", attempted);
+                break;
+            }
+        } while(lFrameInfo.TotalMetadataBufferSize <= 0 ||
+                lFrameInfo.LastPresentTime.QuadPart <= 0);
+    }
 
     if (FAILED(hr)){
+        odprintf("Could not acquire next frame");
         return;
     }
 
-    // QI for ID3D11Texture2D
+    ComPtr<ID3D11Texture2D> lAcquiredDesktopImage;
     hr = lDesktopResource->QueryInterface(IID_PPV_ARGS(&lAcquiredDesktopImage));
     lDesktopResource->Release();
     lDesktopResource = nullptr;
     if (FAILED(hr) || lAcquiredDesktopImage == nullptr){
         odprintf("Failed to acuqire texture from resource");
-        deskDup->ReleaseFrame();
+        dDeskDup->ReleaseFrame();
         return;
     }
 
-    hr = lDevice->CreateTexture2D(&desc, NULL, &lGDIImage);
+    hr = dDevice->CreateTexture2D(&dDesc, NULL, &lGDIImage);
     if (FAILED(hr) || lGDIImage == nullptr){
         odprintf("Failed to copy image data to access texture");
-        deskDup->ReleaseFrame();
+        dDeskDup->ReleaseFrame();
         return;
     }
 
     // Copy image into GDI drawing texture
-    pContext->CopyResource(lGDIImage.Get(), lAcquiredDesktopImage.Get());
+    dContext->CopyResource(lGDIImage.Get(), lAcquiredDesktopImage.Get());
 
     D3D11_MAPPED_SUBRESOURCE resource;
 
@@ -1294,27 +934,27 @@ void TimePie::captureGameFullScreen3(QString filename)
         }
 
         // Copy image into CPU access texture
-        hr = lDevice->CreateTexture2D(&desc, NULL, &lDestImage);
+        hr = dDevice->CreateTexture2D(&dDesc, NULL, &lDestImage);
         if (FAILED(hr) || lDestImage == nullptr){
             return;
         }
 
-        pContext->CopyResource(lDestImage.Get(), lGDIImage.Get());
-        pContext->Map(lDestImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
+        dContext->CopyResource(lDestImage.Get(), lGDIImage.Get());
+        dContext->Map(lDestImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
     }else{
-        pContext->Map(lGDIImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
+        dContext->Map(lGDIImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
 
     }
 
     auto unmapTextureImage = [&](){
         if(catchCursor){
-            pContext->Unmap(lDestImage.Get(), 0);
+            dContext->Unmap(lDestImage.Get(), 0);
         }else{
-            pContext->Unmap(lGDIImage.Get(), 0);
+            dContext->Unmap(lGDIImage.Get(), 0);
         }
     };
 
-    uint64_t imageSize = uint64_t(resource.RowPitch) * uint64_t(desc.Height);
+    uint64_t imageSize = uint64_t(resource.RowPitch) * uint64_t(dDesc.Height);
     //for 1080p this is: 1920*1080*4=8294400
     odprintf("image size = %lld", (long long)imageSize);
     if (imageSize > UINT32_MAX){
@@ -1322,14 +962,14 @@ void TimePie::captureGameFullScreen3(QString filename)
         return;
     }
 
-    // because desc.Format is always DXGI_FORMAT_B8G8R8A8_UNORM
+    // because dDesc.Format is always DXGI_FORMAT_B8G8R8A8_UNORM
     WICPixelFormatGUID pfGuid = GUID_WICPixelFormat32bppBGRA;
     WICPixelFormatGUID targetGuid =  GUID_WICPixelFormat24bppBGR;
     auto pWIC = _GetWIC();
 
     // Conversion required to write
     ComPtr<IWICBitmap> source;
-    hr = pWIC->CreateBitmapFromMemory(desc.Width, desc.Height, pfGuid,
+    hr = pWIC->CreateBitmapFromMemory(dDesc.Width, dDesc.Height, pfGuid,
         resource.RowPitch, static_cast<UINT>(imageSize),
         static_cast<BYTE*>(resource.pData), source.GetAddressOf());
     if (FAILED(hr)) {
@@ -1398,7 +1038,7 @@ void TimePie::captureGameFullScreen3(QString filename)
         return;
     }
 
-    hr = frame->SetSize(desc.Width, desc.Height);
+    hr = frame->SetSize(dDesc.Width, dDesc.Height);
     if(FAILED(hr)){
         return;
     }
@@ -1425,7 +1065,7 @@ void TimePie::captureGameFullScreen3(QString filename)
         (void)metawriter->SetMetadataByName(L"System.Image.ColorSpace", &value);
     }
 
-    WICRect rect = { 0, 0, static_cast<INT>(desc.Width), static_cast<INT>(desc.Height) };
+    WICRect rect = { 0, 0, static_cast<INT>(dDesc.Width), static_cast<INT>(dDesc.Height) };
     hr = frame->WriteSource(FC.Get(), &rect);
 
     unmapTextureImage();
