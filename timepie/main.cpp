@@ -8,6 +8,7 @@
 ****************************************************************************/
 
 #include <QtGui>
+#include "pch.h"
 #include "timepie.h"
 
 int main(int argc, char *argv[])
@@ -15,6 +16,10 @@ int main(int argc, char *argv[])
     Q_INIT_RESOURCE(timepie); //initialize stuff in timepie.qrc
 
     QApplication app(argc, argv);
+    app.setOrganizationName(ORGANIZATION_NAME);
+    app.setOrganizationDomain(ORGANIZATION_DOMAIN);
+    app.setApplicationName(APPLICATION_NAME);
+    app.setQuitOnLastWindowClosed(false);
 
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         QMessageBox::critical(0, QObject::tr("Systray"),
@@ -22,8 +27,6 @@ int main(int argc, char *argv[])
                                           "on this system."));
         return 1;
     }
-    QApplication::setApplicationName("TimePie");
-    QApplication::setQuitOnLastWindowClosed(false);
 
     TimePie window;
 

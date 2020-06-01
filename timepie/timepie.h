@@ -38,19 +38,20 @@
 #include <QHttpPart>
 #include <QSqlDatabase>
 #include <QSqlQuery>
-
+#include <QSettings>
+#include <wrl.h>
 #include <sdkddkver.h>
 //#define _WIN32_WINNT _WIN32_WINNT_WIN7
 #include <windows.h>
 #include <tchar.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
-
+//#include <dxgi1_5.h>
 #include <lm.h>
-
 namespace Ui {
     class TMController;
 }
+using namespace Microsoft::WRL;
 
 //! [0]
 class TimePie : public QDialog
@@ -79,6 +80,8 @@ private slots:
     void on_closeButton_clicked();
 
 private:
+    void readSettings();
+    void saveSettings();
     void createIconGroupBox();
     void createMessageGroupBox();
     void createTrayIcon();
@@ -86,7 +89,6 @@ private:
     bool getConfigFromFile();
     void authWithWebServer();
     void captureFullScreenDDA(QString filename);
-    void initDDA();
 
     Ui::TMController *ui;
     HWND hwndFound;
@@ -103,6 +105,7 @@ private:
     QString progDataDir;
     QString lastWindowTitle;
     uint lastUploadTime;
+    ULONGLONG lastScreenShotTime;
     QString userEmail;
     QString userApiKey;
     QString computerName;
@@ -115,11 +118,9 @@ private:
     bool notActive;
     bool configIsOK;
     bool sessionUserIsAdmin;
-    ID3D11Device *dDevice;
-    ID3D11DeviceContext *dContext;
-    IDXGIOutputDuplication* dDeskDup;
-    D3D11_TEXTURE2D_DESC dDesc;
+
     bool ddaInitialized;
+    bool frameReleased;
 };
 
 //! [0]

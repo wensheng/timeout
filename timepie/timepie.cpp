@@ -7,6 +7,7 @@
 **
 ****************************************************************************/
 
+#include "pch.h"
 #include "timepie.h"
 #include "ui_dialog.h"
 #include "timepieeventfilter.h"
@@ -16,7 +17,7 @@
 #include <odprint.h>
 #include <psapi.h> //for GetModuleFileNameEx
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
-#include <wrl.h>
+
 #include <wincodec.h>
 #include <Wingdi.h>
 //#include <d3d11.h>
@@ -53,6 +54,7 @@ TimePie::TimePie(QWidget *parent):
     /*
      * session username
      */
+    lastScreenShotTime = 0;
     wchar_t currentUsername[256];
     DWORD sizeUserName = sizeof(currentUsername);
     GetUserNameW(currentUsername, &sizeUserName);
@@ -64,6 +66,8 @@ TimePie::TimePie(QWidget *parent):
     }else{
         odprintf("user NOT admin");
     }
+
+    QSettings settings;
 
     /*
      * set C:\ProgramData\TimePie as progDataDir
@@ -157,7 +161,7 @@ TimePie::TimePie(QWidget *parent):
     createTrayIcon();
     trayIcon->show();
 
-    setWindowTitle(tr("ieh.me"));
+    setWindowTitle(tr(APPLICATION_NAME));
     
     //create file-system watcher
     fswatcher = new QFileSystemWatcher;
@@ -399,42 +403,43 @@ void TimePie::shootScreen()
     //qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
 
     if(currentApplicationName==lastApplicationName && currentWindowTitle==lastWindowTitle){
-        return;
-    }
-
-    if(db.open()){
-        QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
-                                 .arg(currentTime.toTime_t())
-                                 .arg(sessionUsername)
-                                 .arg(currentApplicationName)
-                                 .arg(currentWindowTitle)
-                                 .arg(1);
-        //qDebug()<<sqlstr.toUtf8().data();
-        odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
-
-        QSqlQuery query = QSqlQuery(db);
-        bool ret = query.exec(sqlstr);
-        if (ret){
-            odprintf(" -> success");
-            //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
-        }else{
-                    odprintf(" -> insert failed");
+        ULONGLONG currentTC = GetTickCount64() - lastScreenShotTime;
+        if(currentTC < SameAppScreenShotInterval){
+            return;
         }
-        db.close();
+    }else{
+        if(db.open()){
+            QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
+                                     .arg(currentTime.toTime_t())
+                                     .arg(sessionUsername)
+                                     .arg(currentApplicationName)
+                                     .arg(currentWindowTitle)
+                                     .arg(1);
+            //qDebug()<<sqlstr.toUtf8().data();
+            odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
+
+            QSqlQuery query = QSqlQuery(db);
+            bool ret = query.exec(sqlstr);
+            if (ret){
+                odprintf(" -> success");
+                //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
+            }else{
+                        odprintf(" -> insert failed");
+            }
+            db.close();
+        }
     }
 
     unsigned int fullscreenStatus = 0;
     QUERY_USER_NOTIFICATION_STATE pquns;
     SHQueryUserNotificationState(&pquns);
     // https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state
-    if(pquns == QUNS_BUSY){
-        // youtube, powerpoint fullscreen
-        odprintf("QUNS_BUSY");
-        fullscreenStatus = 1;
-    }else if(pquns == QUNS_RUNNING_D3D_FULL_SCREEN){
+    // youtube, powerpoint fullscreen will be QUNS_BUSY
+    // but sometimes QUNS_BUSY not really fullscreen
+    if(pquns == QUNS_RUNNING_D3D_FULL_SCREEN){
         // game such as: Minecraft, LOL
         odprintf("QUNS_RUNNING_D3D_FULL_SCREEN");
-        fullscreenStatus = 2;
+        fullscreenStatus = 1;
     }
 
     RECT rect;
@@ -453,18 +458,18 @@ void TimePie::shootScreen()
                  monitorInfo.rcMonitor.bottom);
     }
 
-    if(!fullscreenStatus && rect.right && monitorInfo.rcMonitor.right){
+    if(!fullscreenStatus && rect.right){
         if(rect.left == monitorInfo.rcMonitor.left
            && rect.right == monitorInfo.rcMonitor.right
            && rect.top == monitorInfo.rcMonitor.top
            && rect.bottom == monitorInfo.rcMonitor.bottom){
             // Roblox fullscreen etc.
-            fullscreenStatus = 3;
+            // if QUNS_BUSY is really fullscreen, status will be over-write to 3
+            fullscreenStatus = 2;
         }
     }
 
     if(fullscreenStatus){
-        // TODO: fullscreenStatus 1/2 call different capture methods
         odprintf("fullscreen mode detected: %d", fullscreenStatus);
         captureFullScreenDDA(fileName);
     }else{
@@ -490,6 +495,7 @@ void TimePie::shootScreen()
         }
     }
 
+    lastScreenShotTime = GetTickCount64();
     lastWindowTitle = currentWindowTitle;
     lastApplicationName = currentApplicationName;
 }
@@ -696,21 +702,60 @@ bool IsUserAdmin(wchar_t* uname){
     return result;
 }
 
-void TimePie::initDDA()
+
+/*
+ * Screen capture using Windows Desktop Duplication API
+ * largely based on: https://www.codeproject.com/Tips/1116253/Desktop-screen-capture-on-Windows-via-Windows-Desk
+ * save to jpg see: https://github.com/microsoft/DirectXTK/blob/master/Src/ScreenGrab.cpp
+ * also: https://stackoverflow.com/questions/51613903/desktopduplication-api-produces-black-frames-while-certain-applications-are-in-f
+ * and: https://stackoverflow.com/questions/46145057/desktop-duplication-directx-screen-capture-fails-to-deliver-screen-updates
+ * and: https://github.com/sskodje/ScreenRecorderLib - internal_recorder.cpp
+ */
+void TimePie::captureFullScreenDDA(QString filename)
 {
-    if(ddaInitialized){
-        return;
-    }
-    odprintf("Start initializing DDA");
+    wchar_t *wfilename = new wchar_t[filename.length() + 1];
+    filename.toWCharArray(wfilename);
+    wfilename[filename.length()] = 0;
+    const bool catchCursor = false;
 
-    dDevice = nullptr;
-    dContext = nullptr;
-    dDeskDup = nullptr;
-
+    odprintf("screenshot filename: %ls", wfilename);
+    ComPtr<ID3D11Device> pDevice;
+    ComPtr<ID3D11DeviceContext>  pContext;
+    ComPtr<IDXGIOutputDuplication> pDeskDup;
+    D3D11_TEXTURE2D_DESC dDesc;
     HRESULT hr(E_FAIL);
+
+    odprintf("Start initializing DDA");
 
     D3D_FEATURE_LEVEL gFeatureLevels =  D3D_FEATURE_LEVEL_11_0;
     D3D_FEATURE_LEVEL lFeatureLevel;
+
+    /*
+    IDXGIFactory1 *dFactory;
+    hr = CreateDXGIFactory1(IID_PPV_ARGS(&dFactory));
+    if(FAILED(hr)){
+        odprintf("could not create dfactory");
+        return;
+    }
+    IDXGIAdapter *dAdapter;
+    hr = dFactory->EnumAdapters(0, &dAdapter);
+    if(FAILED(hr)){
+        odprintf("could not enumerate device");
+        return;
+    }
+
+    hr = D3D11CreateDevice(dAdapter,
+                D3D_DRIVER_TYPE_UNKNOWN,
+                nullptr,
+                0,
+                &gFeatureLevels,
+                1,
+                D3D11_SDK_VERSION,
+                &pDevice,
+                &lFeatureLevel,
+                &pContext);
+                */
+
     // Create device
     hr = D3D11CreateDevice(nullptr,
                 D3D_DRIVER_TYPE_HARDWARE,
@@ -719,16 +764,23 @@ void TimePie::initDDA()
                 &gFeatureLevels,
                 1,
                 D3D11_SDK_VERSION,
-                &dDevice,
+                &pDevice,
                 &lFeatureLevel,
-                &dContext);
+                &pContext);
 
-    if (dDevice == nullptr){
+    if(FAILED(hr)){
+        std::string message = std::system_category().message(hr);
+        odprintf("Could not create device: 0X%08lx\n%s", hr, message.c_str());
+        return;
+    }
+
+    if (pDevice == nullptr){
         odprintf("Could not create device");
+        return;
     }
     // Get DXGI device
     ComPtr<IDXGIDevice> lDxgiDevice;
-    hr = dDevice->QueryInterface(IID_PPV_ARGS(&lDxgiDevice));
+    hr = pDevice->QueryInterface(IID_PPV_ARGS(&lDxgiDevice));
     if (FAILED(hr)){
         odprintf("Could not cat DXGI device");
         return;
@@ -770,17 +822,17 @@ void TimePie::initDDA()
     lDxgiOutput.Reset();
 
     // Create desktop duplication
-    hr = lDxgiOutput1->DuplicateOutput(dDevice, &dDeskDup);
+    hr = lDxgiOutput1->DuplicateOutput(pDevice.Get(), &pDeskDup);
     if (FAILED(hr)){
         std::string message = std::system_category().message(hr);
-        odprintf("Could not create DD output:\n%s", message.c_str());
+        odprintf("Could not create DD output: 0X%08lx\n%s", hr, message.c_str());
         return;
     }
     lDxgiOutput1.Reset();
 
     DXGI_OUTDUPL_DESC lOutputDuplDesc;
     // Create GUI drawing texture
-    dDeskDup->GetDesc(&lOutputDuplDesc);
+    pDeskDup->GetDesc(&lOutputDuplDesc);
 
 
     dDesc.Width = lOutputDuplDesc.ModeDesc.Width;
@@ -799,51 +851,39 @@ void TimePie::initDDA()
     dDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     //dDesc.Usage = D3D11_USAGE_DEFAULT; // read/write
     dDesc.Usage = D3D11_USAGE_STAGING; //support transfer/copy from GPU to CPU
-
     odprintf("DDA initiallized");
-    ddaInitialized = true;
-}
-
-/*
- * Screen capture using Windows Desktop Duplication API
- * largely based on: https://www.codeproject.com/Tips/1116253/Desktop-screen-capture-on-Windows-via-Windows-Desk
- * save to jpg see: https://github.com/microsoft/DirectXTK/blob/master/Src/ScreenGrab.cpp
- * also: https://stackoverflow.com/questions/51613903/desktopduplication-api-produces-black-frames-while-certain-applications-are-in-f
- * and: https://stackoverflow.com/questions/46145057/desktop-duplication-directx-screen-capture-fails-to-deliver-screen-updates
- * and: https://github.com/sskodje/ScreenRecorderLib - internal_recorder.cpp
- */
-void TimePie::captureFullScreenDDA(QString filename)
-{
-    wchar_t *wfilename = new wchar_t[filename.length() + 1];
-    filename.toWCharArray(wfilename);
-    wfilename[filename.length()] = 0;
-    const bool catchCursor = false;
-
-    //ComPtr<ID3D11Device> lDevice;
-    //ComPtr<ID3D11DeviceContext> pContext;
-    //IDXGIOutputDuplication* deskDup;
-    //D3D11_TEXTURE2D_DESC desc;
-
-    ComPtr<ID3D11Texture2D> lGDIImage;
-    ComPtr<ID3D11Texture2D> lDestImage;
-
-    HRESULT hr(E_FAIL);
-
-    initDDA();
-    if(ddaInitialized == false){
-        return;
-    }
 
     ComPtr<IDXGIResource> lDesktopResource;
-    DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
-    hr = dDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
+
+    DWORD startTicks = GetTickCount();
+    int attempted = 0;
+    while(true){
+        DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
+        //pDeskDup->ReleaseFrame();
+        odprintf("before 1st acquire next fram");
+        hr = pDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
+        odprintf("after 1st acquire next fram");
+
+        if(SUCCEEDED(hr) && lFrameInfo.TotalMetadataBufferSize > 0 && lFrameInfo.LastPresentTime.QuadPart > 0){
+            break;
+        }
+
+        pDeskDup->ReleaseFrame();
+        attempted++;
+        if(GetTickCount() - startTicks > 2000 || attempted > 10){
+            odprintf("Timed out after %d attempts", attempted);
+            break;
+        }
+    }
+
+    /*
+    hr = pDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
     if(FAILED(hr)){
         std::string message = std::system_category().message(hr);
         odprintf("AcquireNextFrame failed: 0X%08lx\n%s", hr, message.c_str());
         if (hr == DXGI_ERROR_ACCESS_LOST || hr == DXGI_ERROR_INVALID_CALL) {
-            // Access may be lost when changing from/to fullscreen mode(any application);
+            // Access will be lost when changing from/to fullscreen mode(any application);
             // when this happens we need to reaquirce the outputdup
-            //dDeskDup->ReleaseFrame();
             odprintf("DXGI ACCESS_LOST/INVALID_CALL - trying to re-init DDA");
             ddaInitialized = false;
             initDDA();
@@ -854,12 +894,11 @@ void TimePie::captureFullScreenDDA(QString filename)
         DWORD startTicks = GetTickCount();
         int attempted = 0;
         do{
-            dDeskDup->ReleaseFrame();
-            hr = dDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
+            pDeskDup->ReleaseFrame();
+            hr = pDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
             if(FAILED(hr)){
-                if (hr == DXGI_ERROR_ACCESS_LOST) {
+                if (hr == DXGI_ERROR_ACCESS_LOST || hr == DXGI_ERROR_INVALID_CALL) {
                     // this should not happen but just in case
-                    odprintf("DXGI_ERROR_ACCESS_LOST - trying to re-init DDA");
                     ddaInitialized = false;
                     initDDA();
                     if(!ddaInitialized){
@@ -875,31 +914,36 @@ void TimePie::captureFullScreenDDA(QString filename)
         } while(lFrameInfo.TotalMetadataBufferSize <= 0 ||
                 lFrameInfo.LastPresentTime.QuadPart <= 0);
     }
+    */
 
     if (FAILED(hr)){
-        odprintf("Could not acquire next frame");
+        std::string message = std::system_category().message(hr);
+        odprintf("AcquireNextFrame failed: 0X%08lx\n%s", hr, message.c_str());
         return;
     }
 
     ComPtr<ID3D11Texture2D> lAcquiredDesktopImage;
     hr = lDesktopResource->QueryInterface(IID_PPV_ARGS(&lAcquiredDesktopImage));
-    lDesktopResource->Release();
-    lDesktopResource = nullptr;
+    //lDesktopResource->Release();
+    //lDesktopResource = nullptr;
     if (FAILED(hr) || lAcquiredDesktopImage == nullptr){
         odprintf("Failed to acuqire texture from resource");
-        dDeskDup->ReleaseFrame();
+        pDeskDup->ReleaseFrame();
         return;
     }
 
-    hr = dDevice->CreateTexture2D(&dDesc, NULL, &lGDIImage);
+    ComPtr<ID3D11Texture2D> lGDIImage;
+    ComPtr<ID3D11Texture2D> lDestImage;
+
+    hr = pDevice->CreateTexture2D(&dDesc, NULL, &lGDIImage);
     if (FAILED(hr) || lGDIImage == nullptr){
         odprintf("Failed to copy image data to access texture");
-        dDeskDup->ReleaseFrame();
+        pDeskDup->ReleaseFrame();
         return;
     }
 
     // Copy image into GDI drawing texture
-    dContext->CopyResource(lGDIImage.Get(), lAcquiredDesktopImage.Get());
+    pContext->CopyResource(lGDIImage.Get(), lAcquiredDesktopImage.Get());
 
     D3D11_MAPPED_SUBRESOURCE resource;
 
@@ -934,24 +978,25 @@ void TimePie::captureFullScreenDDA(QString filename)
         }
 
         // Copy image into CPU access texture
-        hr = dDevice->CreateTexture2D(&dDesc, NULL, &lDestImage);
+        hr = pDevice->CreateTexture2D(&dDesc, NULL, &lDestImage);
         if (FAILED(hr) || lDestImage == nullptr){
             return;
         }
 
-        dContext->CopyResource(lDestImage.Get(), lGDIImage.Get());
-        dContext->Map(lDestImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
+        pContext->CopyResource(lDestImage.Get(), lGDIImage.Get());
+        pContext->Map(lDestImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
     }else{
-        dContext->Map(lGDIImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
+        pContext->Map(lGDIImage.Get(), 0, D3D11_MAP_READ, 0, &resource);
 
     }
 
     auto unmapTextureImage = [&](){
         if(catchCursor){
-            dContext->Unmap(lDestImage.Get(), 0);
+            pContext->Unmap(lDestImage.Get(), 0);
         }else{
-            dContext->Unmap(lGDIImage.Get(), 0);
+            pContext->Unmap(lGDIImage.Get(), 0);
         }
+        pDeskDup->ReleaseFrame();
     };
 
     uint64_t imageSize = uint64_t(resource.RowPitch) * uint64_t(dDesc.Height);
