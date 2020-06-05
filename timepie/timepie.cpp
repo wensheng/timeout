@@ -17,6 +17,7 @@
 #include <odprint.h>
 #include <psapi.h> //for GetModuleFileNameEx
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
+#include <QFileDialog>
 
 #include <wincodec.h>
 #include <Wingdi.h>
@@ -49,12 +50,14 @@ SimpleCrypt crypto(Q_UINT64_C(0xa0f1608c385c24a9));
 TimePie::TimePie(QWidget *parent):
     QDialog(parent),
     ui(new Ui::TMController),
-    ddaInitialized(false)
+    emailAndKeyValidated(false)
 {
+    lastScreenshotFileSize = 0;
+    lastScreenShotTime = 0;
+    lastUploadTime = 0;
     /*
      * session username
      */
-    lastScreenShotTime = 0;
     wchar_t currentUsername[256];
     DWORD sizeUserName = sizeof(currentUsername);
     GetUserNameW(currentUsername, &sizeUserName);
@@ -67,15 +70,16 @@ TimePie::TimePie(QWidget *parent):
         odprintf("user NOT admin");
     }
 
-    QSettings settings;
+
 
     /*
      * set C:\ProgramData\TimePie as progDataDir
      */
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    progDataDir = env.value("ALLUSERSPROFILE");
-    progDataDir.append("\\TimePie");
+    //QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    //progDataDir = env.value("ALLUSERSPROFILE");
+    //progDataDir.append("\\TimePie");
 
+    progDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 
     /*
      * session username base64 encoded
@@ -129,7 +133,6 @@ TimePie::TimePie(QWidget *parent):
     /*
      * some set up
      */
-    lastUploadTime = 0;
     lastApplicationName = QString();
     lastWindowTitle = QString();
     netManager = new QNetworkAccessManager;
@@ -137,11 +140,43 @@ TimePie::TimePie(QWidget *parent):
     ui->confirmedLabel->hide();
 
     /*
+     * read settings
+     */
+    QSettings settings;
+    settings.beginGroup(SETTINGS_GROUP_NAME);
+    pts.keepLocalCopies = settings.value("keepLocalCopies", false).toBool();
+    pts.isContinuousMode = settings.value("isContinuousMode", false).toBool();
+    pts.continuousModeInterval = settings.value("continuousModeInterval",
+                                                SameAppScreenShotInterval).toInt();
+    pts.noScreenshot = settings.value("noScreenshot", false).toBool();
+    pts.screenshotSaveDir = settings.value("screenshotSaveDir", "").toString();
+    pts.email = settings.value("email", "").toString();
+    pts.apikey = settings.value("apikey", "").toString();
+    pts.computerName = settings.value("computerName", "").toString();
+    settings.endGroup();
+
+    ui->screenshotSettingsLabel->setText("");
+    ui->keepLocalCheckBox->setChecked(pts.keepLocalCopies);
+    ui->continuousCheckBox->setChecked(pts.isContinuousMode);
+    ui->noScreenshotCheckBox->setChecked(pts.noScreenshot);
+    ui->intervalMinutesLabel->setText(QString::number(pts.continuousModeInterval));
+    ui->intervalMinutesSlider->setValue(pts.continuousModeInterval);
+    ui->folderPath->setText(pts.screenshotSaveDir);
+    if(!pts.keepLocalCopies){
+        ui->selectLocationPushButton->setDisabled(true);
+        ui->folderPath->setDisabled(true);
+    }
+    if(!pts.isContinuousMode){
+        ui->intervalMinutesSlider->setDisabled(true);
+    }
+
+    /*
      * get config file.
      * config file is only saved when any user entered correct ieh.me username and apikey
      *   and was verified by ieh.me server
      * so if it exists, it's valid, the file is encrypted by simplecrypt
      */
+    /*
     configFilePath = QString(progDataDir);
     configFilePath.append(QDir::separator()).append("timeout.cfg");
     configIsOK = false;
@@ -156,6 +191,20 @@ TimePie::TimePie(QWidget *parent):
     }else{
         ui->computernameEdit->setText(QHostInfo::localHostName());
         ui->isrunningLabel->setText("Please enter your email and API key");
+    }
+    */
+    if(pts.email.isEmpty() || pts.apikey.isEmpty()){
+        ui->isrunningLabel->setText("Please enter your email and API key");
+    }else{
+        ui->emailEdit->setText(pts.email);
+        ui->apikeyEdit->setText(pts.apikey);
+        authWithWebServer();
+    }
+
+    if(pts.computerName.isEmpty()){
+        ui->computernameEdit->setText(QHostInfo::localHostName());
+    }else{
+        ui->computernameEdit->setText(pts.computerName);
     }
 
     createTrayIcon();
@@ -179,24 +228,27 @@ TimePie::TimePie(QWidget *parent):
 
     initData();
 
-    //try to take a screenshot every minute
-    minuteTimer = new QTimer();
-    minuteTimer->setInterval(30000);
-    connect(minuteTimer,SIGNAL(timeout()),this,SLOT(shootScreen()));
-    minuteTimer->start();
+    mainTimer = new QTimer();
+    mainTimer->setInterval(mainTimerInterval);
+    connect(mainTimer, &QTimer::timeout, this, &TimePie::shootScreen);
+    mainTimer->start();
     
-    //upload data every half hour(1800 seconds)
-    hourTimer = new QTimer();
-    //hourTimer->setInterval(1800000);
-    hourTimer->setInterval(300000);
-    connect(hourTimer,SIGNAL(timeout()),this,SLOT(sendData()));
-    hourTimer->start();
+    dataTimer = new QTimer();
+    dataTimer->setInterval(DefaultDataInterval);
+    connect(dataTimer, &QTimer::timeout, this, &TimePie::sendData);
+    dataTimer->start();
     
     notActive = false;
     HWND thisHwnd = (HWND)this->winId();
     WTSRegisterSessionNotification(thisHwnd, NOTIFY_FOR_ALL_SESSIONS);
 }
 
+TimePie::~TimePie()
+{
+    QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
+    db.close();
+    QSqlDatabase::removeDatabase( QSqlDatabase::defaultConnection );
+}
 
 void TimePie::showIfAdmin(){
     if(sessionUserIsAdmin){
@@ -208,13 +260,18 @@ void TimePie::showIfAdmin(){
 
 void TimePie::initData()
 {
+    QSqlDatabase db;
+    db = QSqlDatabase::addDatabase("QSQLITE", DATABASE_NAME);
+
     QString dbPath(progDataDir);
     dbPath.append("\\timepie.db");
     //connect to sqlite db "timepie.db" in the installation directory
     //create table `entry` if not already exists
-    db = QSqlDatabase::addDatabase("QSQLITE");
     db.setDatabaseName(dbPath);
-    if(db.open()){
+
+    if(!db.open()){
+        odprintf("Coult not open db");
+    }else{
         /* "entry" table:
          *   uname: session username
          *   pname: foreground program name
@@ -222,10 +279,9 @@ void TimePie::initData()
          *   forget: ?
          */
         QString sqlstr = QString("CREATE TABLE IF NOT EXISTS entry(timestamp integer, uname text, pname text, title text, forget integer)");
-		QSqlQuery query = QSqlQuery(sqlstr,db);
-		query.exec();
+        QSqlQuery query = QSqlQuery(sqlstr,db);
+        query.exec();
         //qDebug()<< db.tables();
-        db.close();
     }
 
     QString shotsDir(progDataDir);
@@ -268,16 +324,25 @@ void TimePie::createTrayIcon()
 {
     trayIcon = new QSystemTrayIcon(this);
 
-#ifdef QT_DEBUG
-    trayIconMenu = new QMenu(this);
-    QAction *showHelp = trayIconMenu->addAction(QString::fromLocal8Bit("Help"));
-    //QAction *quitAction = trayIconMenu->addAction(QByteArray::fromHex("e98080e587ba").data());
-    QAction *quitAction = trayIconMenu->addAction(QString::fromLocal8Bit("Exit"));
+    //previously only show menu in debug build
 
-    connect(showHelp, SIGNAL(triggered()), this, SLOT(openHelpBrowser()));
+//#ifdef QT_DEBUG
+    //QAction *showHelp = trayIconMenu->addAction(QString::fromLocal8Bit("Help"));
+    //QAction *quitAction = trayIconMenu->addAction(QByteArray::fromHex("e98080e587ba").data());
+    //QAction *quitAction = trayIconMenu->addAction(QString::fromLocal8Bit("Exit"));
+    trayIconMenu = new QMenu(this);
+    QAction *settingsAction = new QAction(tr("Settings"), this);
+    trayIconMenu->addAction(settingsAction);
+    QAction *showHelp = new QAction(tr("Help"), this);
+    trayIconMenu->addAction(showHelp);
+    QAction *quitAction = new QAction(tr("Quit"), this);
+    trayIconMenu->addAction(quitAction);
+
+    connect(showHelp, &QAction::triggered, this, &TimePie::openHelpBrowser);
     connect(quitAction, SIGNAL(triggered()), qApp, SLOT(quit()));
+    connect(settingsAction, &QAction::triggered, this, &TimePie::show);
     trayIcon->setContextMenu(trayIconMenu);
-#endif
+//#endif
 
     QIcon thisIcon = QIcon(":/images/speaker.png");
     trayIcon->setIcon(thisIcon);
@@ -292,7 +357,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
     if(serverReply->error() != QNetworkReply::NoError)
     {
         ui->isrunningLabel->setText("network error");
-        odprintf("network error");
+        odprintf("network error:\n%s", serverReply->errorString().toStdString().c_str());
         return;
     }
 
@@ -304,9 +369,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
         QString result = jsonObj["result"].toString();
         odprintf("got auth result: %s", result.toStdString().c_str());
         if(result == "ok"){
-            if(!configIsOK){
-                saveConfigFile();
-            }
+            saveConfigFile();
             userId = jsonObj["userId"].toInt();
             userStatus = jsonObj["userStatus"].toInt();
             lastUploadTime = jsonObj["lastUploadTime"].toInt();
@@ -315,7 +378,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
             ui->confirmedLabel->show();
             ui->isrunningLabel->setText("Apikey is verified.");
         }else{
-            configIsOK = false;
+            emailAndKeyValidated = true;
             ui->confirmedLabel->hide();
         }
     }else if(replyType == "data"){
@@ -335,6 +398,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
 
 
 void TimePie::saveConfigFile(){
+    /*
     QFile configFile(configFilePath);
     QJsonObject jsonObj;
     jsonObj.insert("Email", QJsonValue::fromVariant(userEmail));
@@ -348,18 +412,27 @@ void TimePie::saveConfigFile(){
     configIsOK = true;
     ui->confirmedLabel->show();
     odprintf("config file: %s saved", configFilePath.toStdString().c_str());
+    */
+    QSettings settings;
+    settings.beginGroup(SETTINGS_GROUP_NAME);
+    settings.setValue("Email", userEmail);
+    settings.setValue("ApiKey", userApiKey);
+    settings.setValue("ComputerName", computerName);
+    settings.endGroup();
+    ui->confirmedLabel->show();
 }
 
 void TimePie::openHelpBrowser()
 {
-    QDesktopServices::openUrl(QUrl("https://ieh.me/help",QUrl::StrictMode));
+    QDesktopServices::openUrl(QUrl(APP_WEBSITE "help", QUrl::StrictMode));
 }
 
 void TimePie::shootScreen()
 {
-    if(!configIsOK){
+    if(pts.noScreenshot){
         return;
     }
+
     QDateTime currentTime = QDateTime::currentDateTime();
     QString currentApplicationName=QString();
     QString currentWindowTitle=QString();
@@ -402,13 +475,20 @@ void TimePie::shootScreen()
     delete[] appName;
     //qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
 
-    if(currentApplicationName==lastApplicationName && currentWindowTitle==lastWindowTitle){
+    if(currentApplicationName==lastApplicationName
+            && currentWindowTitle==lastWindowTitle){
+        //no change from previous app/title
+        if(pts.isContinuousMode == false){
+            return;
+        }
         ULONGLONG currentTC = GetTickCount64() - lastScreenShotTime;
-        if(currentTC < SameAppScreenShotInterval){
+        if(currentTC < pts.continuousModeInterval * 60000){
             return;
         }
     }else{
+        QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
         if(db.open()){
+            /*
             QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
                                      .arg(currentTime.toTime_t())
                                      .arg(sessionUsername)
@@ -417,16 +497,22 @@ void TimePie::shootScreen()
                                      .arg(1);
             //qDebug()<<sqlstr.toUtf8().data();
             odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
-
             QSqlQuery query = QSqlQuery(db);
             bool ret = query.exec(sqlstr);
-            if (ret){
-                odprintf(" -> success");
+            */
+
+            QSqlQuery query = QSqlQuery(db);
+            query.prepare("INSERT INTO entry values(:timestamp, :username, :program, :wintitle, 1)");
+            query.bindValue(":timestamp", currentTime.toTime_t());
+            query.bindValue(":username", sessionUsername);
+            query.bindValue(":program", currentApplicationName);
+            query.bindValue(":wintitle", currentWindowTitle);
+            if (query.exec()){
+                odprintf(" -> db insert success");
                 //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
             }else{
-                        odprintf(" -> insert failed");
+                odprintf(" -> insert failed");
             }
-            db.close();
         }
     }
 
@@ -494,6 +580,18 @@ void TimePie::shootScreen()
             //originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
         }
     }
+    QDir copyDir = QDir(pts.screenshotSaveDir);
+    if(pts.keepLocalCopies && copyDir.exists()){
+        QFile imgFile(fileName);
+        if(imgFile.exists()){
+            QString copyFileName = QString("%1/%2.jpg").arg(pts.screenshotSaveDir).arg(currentTime.toTime_t());
+            if(emailAndKeyValidated){
+                imgFile.copy(copyFileName);
+            }else{
+                imgFile.rename(copyFileName);
+            }
+        }
+    }
 
     lastScreenShotTime = GetTickCount64();
     lastWindowTitle = currentWindowTitle;
@@ -502,15 +600,16 @@ void TimePie::shootScreen()
 
 void TimePie::sendData()
 {
-    if(configIsOK == false || lastUploadTime == 0){
+    if(!emailAndKeyValidated){
         return;
     }
 
-
-    QString sqlstr = QString("SELECT timestamp, uname, pname, title FROM entry where timestamp >%1").arg(lastUploadTime);
+    QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
     if(!db.open()){
         return;
     }
+
+    QString sqlstr = QString("SELECT timestamp, uname, pname, title FROM entry where timestamp >%1").arg(lastUploadTime);
     QSqlQuery query = QSqlQuery(sqlstr, db);
     query.exec();
     QJsonArray jsonArray;
@@ -522,18 +621,18 @@ void TimePie::sendData()
         jsonObj.insert("title", query.value(3).toString());
         jsonArray.append(jsonObj);
     }
-    db.close();
 
     QJsonObject data;
     data["data"] = jsonArray;
     data["email"] = userEmail;
+    data["computer"] = computerName;
     data["apikey"] = userApiKey;
     int currentUploadTime = QDateTime::currentDateTime().toTime_t();
     data["last"] = currentUploadTime;
     QJsonDocument json;
     json.setObject(data);
 
-    QUrl url("http://ieh.me/a/data");
+    QUrl url(APP_WEBSITE "a/data");
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
     
@@ -543,18 +642,22 @@ void TimePie::sendData()
     QDir dir(progDataDir + "\\shots");
     dir.setFilter(QDir::Files|QDir::NoSymLinks);
     const QFileInfoList fileInfoList = dir.entryInfoList();
-    foreach(const QFileInfo& fi, fileInfoList){
+    int delay = 0;
+    for(const QFileInfo& fi: fileInfoList){
         if((unsigned)fi.baseName().toInt() < lastUploadTime){
             QFile::remove(fi.absoluteFilePath());
         }else{
-            uploadFile(fi);
+            delay += 2000;
+            QTimer::singleShot(delay, [this, fi]() {
+                this->uploadFile(fi);
+            });
         }
     }
     lastUploadTime = currentUploadTime;
 }
 
 void TimePie::uploadFile(const QFileInfo fi){
-    QString uploadAddress = QString("http://ieh.me/a/upload/%1").arg(userId);
+    QString uploadAddress = QString(APP_WEBSITE "a/upload/%1").arg(userId);
     QUrl testUrl(uploadAddress);
     QNetworkRequest request(testUrl);
     
@@ -627,12 +730,12 @@ bool TimePie::nativeEvent(const QByteArray &eventType, void *message, long *resu
     MSG *msg = static_cast<MSG*>(message);
     switch(msg->message){
     case WTS_SESSION_LOCK:
-        minuteTimer->stop();
-        hourTimer->stop();  
+        mainTimer->stop();
+        dataTimer->stop();
         break;
     case WTS_SESSION_UNLOCK:
-        minuteTimer->start();
-        hourTimer->start();
+        mainTimer->start();
+        dataTimer->start();
         break;
     default:
         break;
@@ -640,6 +743,7 @@ bool TimePie::nativeEvent(const QByteArray &eventType, void *message, long *resu
     return false;
 }
 
+// TODO: on longer used, will be removed
 bool TimePie::getConfigFromFile(){
     QFile configFile(configFilePath);
     if(!configFile.exists()){
@@ -672,12 +776,12 @@ void TimePie::on_confirmButton_clicked()
 }
 
 void TimePie::authWithWebServer(){
-    QUrl url = QString("http://ieh.me/a/auth");
+    QUrl url = QString(APP_WEBSITE "a/auth");
     QNetworkRequest req(url);
     QJsonDocument json;
     QJsonObject data;
-    data["email"] = userEmail;
-    data["apikey"] = userApiKey;
+    data["email"] = pts.email;
+    data["apikey"] = pts.apikey;
     json.setObject(data);
     req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
     //req.setHeader(QNetworkRequest::ContentLengthHeader, QByteArray::number(jsonPost.size()));
@@ -859,11 +963,7 @@ void TimePie::captureFullScreenDDA(QString filename)
     int attempted = 0;
     while(true){
         DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
-        //pDeskDup->ReleaseFrame();
-        odprintf("before 1st acquire next fram");
         hr = pDeskDup->AcquireNextFrame(500, &lFrameInfo, &lDesktopResource);
-        odprintf("after 1st acquire next fram");
-
         if(SUCCEEDED(hr) && lFrameInfo.TotalMetadataBufferSize > 0 && lFrameInfo.LastPresentTime.QuadPart > 0){
             break;
         }
@@ -1133,4 +1233,92 @@ void TimePie::captureFullScreenDDA(QString filename)
     }
 
     //delonfail.clear();
+}
+
+void TimePie::on_screenshotSettingsOKButton_clicked()
+{
+    if(ui->keepLocalCheckBox->isChecked()){
+        pts.screenshotSaveDir =  ui->folderPath->text();
+        odprintf("screenshotSaveDir=%s", pts.screenshotSaveDir.toStdString().c_str());
+    }
+
+    //if(pts.keepLocalCopies){
+    //    if(ui->keepLocalCheckBox->isChecked()){
+    //    }
+    //}else{
+    //}
+    pts.keepLocalCopies = ui->keepLocalCheckBox->isChecked();
+    pts.isContinuousMode = ui->continuousCheckBox->isChecked();
+    pts.continuousModeInterval = ui->intervalMinutesSlider->value();
+    pts.noScreenshot = ui->noScreenshotCheckBox->isChecked();
+    pts.screenshotSaveDir = pts.screenshotSaveDir;
+
+    QSettings settings;
+    settings.beginGroup(SETTINGS_GROUP_NAME);
+    settings.setValue("keepLocalCopies", ui->keepLocalCheckBox->isChecked());
+    settings.setValue("isContinuousMode", ui->continuousCheckBox->isChecked());
+    settings.setValue("continuousModeInterval", ui->intervalMinutesSlider->value());
+    settings.setValue("noScreenshot", ui->noScreenshotCheckBox->isChecked());
+    settings.setValue("screenshotSaveDir", pts.screenshotSaveDir);
+    settings.endGroup();
+    ui->screenshotSettingsLabel->setText("");
+    this->hide();
+}
+
+void TimePie::on_selectLocationPushButton_clicked()
+{
+    QString saveDir =  QFileDialog::getExistingDirectory(this, tr("Select a Directory"),
+                                                 QDir::homePath(),
+                                                 QFileDialog::ShowDirsOnly
+                                                 | QFileDialog::DontResolveSymlinks);
+    if(!saveDir.isEmpty() && !saveDir.isNull()){
+        ui->folderPath->setText(saveDir);
+        ui->screenshotSettingsLabel->setText("Not Saved");
+    }
+}
+
+
+void TimePie::on_keepLocalCheckBox_clicked(bool checked)
+{
+    if(checked){
+        ui->selectLocationPushButton->setDisabled(false);
+    } else{
+        ui->selectLocationPushButton->setDisabled(true);
+    }
+    ui->screenshotSettingsLabel->setText("Not Saved");
+}
+
+void TimePie::on_continuousCheckBox_clicked(bool checked)
+{
+    if(checked){
+        ui->intervalMinutesSlider->setDisabled(false);
+    } else{
+        ui->intervalMinutesSlider->setDisabled(true);
+    }
+    ui->screenshotSettingsLabel->setText("Not Saved");
+}
+
+void TimePie::on_intervalMinutesSlider_valueChanged(int value)
+{
+   ui->intervalMinutesLabel->setText(QString::number(value));
+}
+
+void TimePie::on_noScreenshotCheckBox_clicked(bool checked)
+{
+    if(checked){
+        ui->screenshotSettingsLabel->setText("Screenshot will not be taken! Settings not saved.");
+    }else{
+        ui->screenshotSettingsLabel->setText("Not Saved");
+    }
+}
+
+void TimePie::on_openFolderPushButton_clicked()
+{
+    QDir folder = QDir(pts.screenshotSaveDir);
+    if(folder.exists()){
+        QDesktopServices::openUrl(QUrl(pts.screenshotSaveDir));
+    }else{
+        ui->screenshotSettingsLabel->setText("folder can not be opened.");
+
+    }
 }

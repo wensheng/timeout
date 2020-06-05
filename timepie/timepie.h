@@ -53,6 +53,18 @@ namespace Ui {
 }
 using namespace Microsoft::WRL;
 
+struct PTSettings{
+    bool keepLocalCopies;
+    bool isContinuousMode;
+    unsigned int continuousModeInterval;
+    bool noScreenshot;
+    QString username;
+    QString screenshotSaveDir;
+    QString email;
+    QString apikey;
+    QString computerName;
+};
+
 //! [0]
 class TimePie : public QDialog
 {
@@ -60,6 +72,7 @@ class TimePie : public QDialog
 
 public:
     explicit TimePie(QWidget *parent = 0);
+    ~TimePie();
     void showIfAdmin();
 
 protected:
@@ -79,8 +92,21 @@ private slots:
     void on_confirmButton_clicked();
     void on_closeButton_clicked();
 
+    void on_screenshotSettingsOKButton_clicked();
+
+    void on_selectLocationPushButton_clicked();
+
+    void on_keepLocalCheckBox_clicked(bool checked);
+
+    void on_continuousCheckBox_clicked(bool checked);
+
+    void on_intervalMinutesSlider_valueChanged(int value);
+
+    void on_noScreenshotCheckBox_clicked(bool checked);
+
+    void on_openFolderPushButton_clicked();
+
 private:
-    void readSettings();
     void saveSettings();
     void createIconGroupBox();
     void createMessageGroupBox();
@@ -110,17 +136,20 @@ private:
     QString userApiKey;
     QString computerName;
     unsigned int userId;
+    unsigned int lastScreenshotFileSize;
     int userStatus;
     QString configFilePath;
-    QTimer *minuteTimer;
-    QTimer *hourTimer;
+    QTimer *mainTimer;
+    QTimer *dataTimer;
     HWND *thisHwnd;
     bool notActive;
     bool configIsOK;
+    bool emailAndKeyValidated;
     bool sessionUserIsAdmin;
 
     bool ddaInitialized;
     bool frameReleased;
+    PTSettings pts;
 };
 
 //! [0]
