@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-9aIt2nRpC12Uk9gS9baDl411NQApFmC26EwAOH8WgZl5MYYxFfc+NcPb1dKGj7Sk" crossorigin="anonymous">
+  <link href="https://cdn.datatables.net/1.10.21/css/dataTables.bootstrap4.min.css" rel="stylesheet">
 </head>
 <body>
   <div class="row">
@@ -15,38 +16,51 @@
   <div class="container">
 	  <div class="panel-body">
 		  <div class="table-responsive">
-  <table class="table table-striped">
-    <tr>
-	    <th class="col-md-2"> </th>
+  <table id="records_table" class="display table table-striped">
+    <thead>
+      <tr>
 	    <th class="col-md-2">time</th>
+	    <th class="col-md-2">screenshots</th>
 	    <th class="col-md-2">program</th>
 	    <th class="col-md-6">title</th>
-    </tr>
+      </tr>
+    </thead>
+    <tbody>
     {{#records}}
     <tr>
-      <td><a href="#{{record[0]}}" class="osnap">screenshot</a></td>
       <td>{{shot}}</a></td>
+      <td><a href="#{{shot}}" class="osnap">screenshot</a></td>
       <td>{{name}}</td>
       <td>{{title}}</td>
     </tr>
     {{/records}}
+    </tbody>
   </table>
 		  </div>
 	  </div>
   </div>
   <div class="modal" id="myModal">
-    <div class="modal-header">
-      <button class="close" data-dismiss="modal">×</button>
-    </div>
-    <div class="modal-body">
-      <div id="snap"></div>
-    </div>
-    <div class="modal-footer">
-      <a href="#" class="btn">Close</a>
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">screenshot</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="snap"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+        </div>
+      </div>
     </div>
   </div>  
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js" integrity="sha384-OgVRvuATP1z7JjHLkuOU7Xw704+h835Lr+6QL9UvYjZE3Ipu6Tp75j7Bh/kR0JKI" crossorigin="anonymous"></script>
+<script src="https://cdn.datatables.net/1.10.21/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.10.21/js/dataTables.bootstrap4.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/4.8.0/echarts.min.js"></script>
 <script>
   var chart = echarts.init(document.getElementById('main-chart'));
@@ -91,22 +105,18 @@
   chart.setOption(chart_option);
 
 
-  $.fn.ready(function(){
-     $('.btn').on('click', function(){
-         $('.btn-info').removeClass("btn-info").addClass("btn-default");
-         $(this).addClass("btn-info");
-         get_stat(this.id);
-     });
+  $(document).ready(function(){
      $('.osnap').on('click', function(){
        var timet = this.hash.substr(1);
-       var img_src = "/static/uploads/users/" + $('#userid').val() + "/" + timet.substr(0,5) + "/" + timet + ".jpg";
-       $('<img src="' + img_src + '" />').appendTo("#snap");
+       var img_src = "{{screenshotLocation}}" + "/" + timet + ".jpg";
+       $('<a target=_blank href="' + img_src + '"><img style="width:766px;" src="' + img_src + '" /></a>').appendTo("#snap");
        $('#myModal').modal("show");
+       return false;
      });
      $('#myModal').on("hidden.bs.modal", function (){
        $('#snap').empty();
      });
-     get_stat("last-hour");
+     $('#records_table').DataTable({"order": [[0, "desc"]]});
   });
 </script>
 </body>

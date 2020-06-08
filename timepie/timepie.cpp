@@ -456,16 +456,17 @@ bool TimePie::generateRport(int reportType)
      */
     QList<std::tuple<QString, QString, int, int>> records;
     while (query.next()){
-        QString first = query.value(0).toString();
-        QString second = query.value(1).toString();
-        int third, fourth;
+        QString te0 = query.value(0).toString();
+        QString te1 = query.value(1).toString();
+        int te2, te3;
+        te2 = query.value(2).toInt();
         if(query.value(3).toInt()){
-            third = query.value(2).toInt();
+            te3 = query.value(3).toInt();
         }else{
-            third = currentTime.toSecsSinceEpoch() - query.value(2).toInt();
+            // this is latest entry with duration=0
+            te3 = currentTime.toSecsSinceEpoch() - query.value(2).toInt();
         }
-        fourth = query.value(3).toInt();
-        records.append(std::make_tuple(first, second, third, fourth));
+        records.append(std::make_tuple(te0, te1, te2, te3));
     }
 
     QMap<QString, int> map;
@@ -500,8 +501,12 @@ bool TimePie::generateRport(int reportType)
 
     QVariantList statList;
     for(const QPair<QString, int> &s: stat){
+        QStringList slist = s.first.split(QDir::separator());
+        if(slist.isEmpty()){
+            continue;
+        }
         QVariantHash rhash;
-        rhash["name"] = s.first;
+        rhash["name"] = slist.last();
         rhash["duration"] = s.second;
         statList << rhash;
     }
@@ -511,6 +516,8 @@ bool TimePie::generateRport(int reportType)
     for(auto &st: stat){
         odprintf("Stat:(%d) %s", st.second, st.first.toStdString().c_str());
     }
+
+    context["screenshotLocation"] = pts.screenshotSaveDir;
 
 
     QFile templateFile(":/resource/report.html");
