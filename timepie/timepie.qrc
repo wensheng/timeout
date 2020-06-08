@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
         <file>images/speaker.png</file>
+        <file>resource/report.html</file>
     </qresource>
 </RCC>

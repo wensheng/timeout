@@ -1,6 +1,7 @@
 #include "timepieeventfilter.h"
 
-void TimePieEventFilter::setup(QWidget *target){
+void TimePieEventFilter::setup(QDialog *target){
+    //this->target = qobject_cast<TimePie *>(target);
     this->target = qobject_cast<TimePie *>(target);
 }
 bool TimePieEventFilter::nativeEventFilter(const QByteArray &eventType, void *message, long *result){
@@ -21,6 +22,13 @@ bool TimePieEventFilter::nativeEventFilter(const QByteArray &eventType, void *me
             //target->activateWindow();
             target->showIfAdmin();
             return true;
+        }
+    }else if(msg->message == WM_WTSSESSION_CHANGE){
+        if(msg->wParam == WTS_SESSION_LOCK){
+            target->toggleTimers(true);
+        }
+        if(msg->wParam == WTS_SESSION_UNLOCK){
+            target->toggleTimers(false);
         }
     }
     return false;

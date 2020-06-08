@@ -57,6 +57,7 @@ struct PTSettings{
     bool keepLocalCopies;
     bool isContinuousMode;
     unsigned int continuousModeInterval;
+    int dayStartingHour;
     bool noScreenshot;
     QString username;
     QString screenshotSaveDir;
@@ -74,6 +75,7 @@ public:
     explicit TimePie(QWidget *parent = 0);
     ~TimePie();
     void showIfAdmin();
+    void toggleTimers(bool);
 
 protected:
     //bool eventFilter(QObject *obj, QEvent *event);
@@ -91,19 +93,12 @@ private slots:
 
     void on_confirmButton_clicked();
     void on_closeButton_clicked();
-
     void on_screenshotSettingsOKButton_clicked();
-
     void on_selectLocationPushButton_clicked();
-
-    void on_keepLocalCheckBox_clicked(bool checked);
-
+    //void on_keepLocalCheckBox_clicked(bool checked);
     void on_continuousCheckBox_clicked(bool checked);
-
     void on_intervalMinutesSlider_valueChanged(int value);
-
     void on_noScreenshotCheckBox_clicked(bool checked);
-
     void on_openFolderPushButton_clicked();
 
 private:
@@ -115,6 +110,8 @@ private:
     bool getConfigFromFile();
     void authWithWebServer();
     void captureFullScreenDDA(QString filename);
+    bool generateRport(int);
+    void openReport(int);
 
     Ui::TMController *ui;
     HWND hwndFound;
@@ -137,6 +134,7 @@ private:
     QString computerName;
     unsigned int userId;
     unsigned int lastScreenshotFileSize;
+    int lastInsertTimeStamp;
     int userStatus;
     QString configFilePath;
     QTimer *mainTimer;

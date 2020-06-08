@@ -9,15 +9,19 @@
 
 #include "pch.h"
 #include "timepie.h"
+#include "mustache.h"
 #include "ui_dialog.h"
 #include "timepieeventfilter.h"
 #include "simplecrypt.h"
+#include <tuple>
 #include <fstream>
 #include <sstream>
 #include <odprint.h>
 #include <psapi.h> //for GetModuleFileNameEx
 #include <WtsApi32.h> // for WTSRegisterSessionNotification
 #include <QFileDialog>
+#include <QSet>
+#include <QSqlError>
 
 #include <wincodec.h>
 #include <Wingdi.h>
@@ -55,6 +59,8 @@ TimePie::TimePie(QWidget *parent):
     lastScreenshotFileSize = 0;
     lastScreenShotTime = 0;
     lastUploadTime = 0;
+    lastInsertTimeStamp = 0;
+
     /*
      * session username
      */
@@ -138,6 +144,12 @@ TimePie::TimePie(QWidget *parent):
     netManager = new QNetworkAccessManager;
     ui->setupUi(this);
     ui->confirmedLabel->hide();
+    for(int i=0;i<24;i++){
+        ui->startHourComboBox->addItem(QString::number(i), i);
+    }
+    //QStringList hoursOfDay = {"0", "1", "2", "3", "4"};
+    //ui->startHourComboBox->addItems(hoursOfDay);
+
 
     /*
      * read settings
@@ -153,6 +165,7 @@ TimePie::TimePie(QWidget *parent):
     pts.email = settings.value("email", "").toString();
     pts.apikey = settings.value("apikey", "").toString();
     pts.computerName = settings.value("computerName", "").toString();
+    pts.dayStartingHour = settings.value("dayStartingHour", 0).toInt();
     settings.endGroup();
 
     ui->screenshotSettingsLabel->setText("");
@@ -162,13 +175,15 @@ TimePie::TimePie(QWidget *parent):
     ui->intervalMinutesLabel->setText(QString::number(pts.continuousModeInterval));
     ui->intervalMinutesSlider->setValue(pts.continuousModeInterval);
     ui->folderPath->setText(pts.screenshotSaveDir);
-    if(!pts.keepLocalCopies){
-        ui->selectLocationPushButton->setDisabled(true);
-        ui->folderPath->setDisabled(true);
-    }
+    // Don't disable, user can select location without keepLocalCopies
+    //if(!pts.keepLocalCopies){
+    //    ui->selectLocationPushButton->setDisabled(true);
+    //    ui->folderPath->setDisabled(true);
+    //}
     if(!pts.isContinuousMode){
         ui->intervalMinutesSlider->setDisabled(true);
     }
+    ui->startHourComboBox->setCurrentIndex(pts.dayStartingHour);
 
     /*
      * get config file.
@@ -197,7 +212,7 @@ TimePie::TimePie(QWidget *parent):
         ui->isrunningLabel->setText("Please enter your email and API key");
     }else{
         ui->emailEdit->setText(pts.email);
-        ui->apikeyEdit->setText(pts.apikey);
+        ui->apikeyEdit->setText(tr("[saved]"));
         authWithWebServer();
     }
 
@@ -258,6 +273,17 @@ void TimePie::showIfAdmin(){
     }
 }
 
+void TimePie::toggleTimers(bool pause)
+{
+    if(pause){
+        mainTimer->stop();
+        dataTimer->stop();
+    }else{
+        mainTimer->start();
+        dataTimer->start();
+    }
+}
+
 void TimePie::initData()
 {
     QSqlDatabase db;
@@ -278,7 +304,13 @@ void TimePie::initData()
          *   title: program title
          *   forget: ?
          */
-        QString sqlstr = QString("CREATE TABLE IF NOT EXISTS entry(timestamp integer, uname text, pname text, title text, forget integer)");
+        QString sqlstr = QString("CREATE TABLE IF NOT EXISTS entry("
+                                 "timestamp integer PRIMARY KEY,"
+                                 "uname text,"
+                                 "pname text,"
+                                 "title text,"
+                                 "forget integer,"
+                                 "duration integer)");
         QSqlQuery query = QSqlQuery(sqlstr,db);
         query.exec();
         //qDebug()<< db.tables();
@@ -331,6 +363,16 @@ void TimePie::createTrayIcon()
     //QAction *quitAction = trayIconMenu->addAction(QByteArray::fromHex("e98080e587ba").data());
     //QAction *quitAction = trayIconMenu->addAction(QString::fromLocal8Bit("Exit"));
     trayIconMenu = new QMenu(this);
+    QMenu *reportMenu = trayIconMenu->addMenu(tr("Reports"));
+    QAction *todayReportAct = new QAction(tr("Today"));
+    QAction *weekReportAct = new QAction(tr("This week"));
+    QAction *monthReportAct = new QAction(tr("This month"));
+    QAction *onlineReportAct = new QAction(tr("pertime.org Report"));
+    reportMenu->addAction(todayReportAct);
+    reportMenu->addAction(weekReportAct);
+    reportMenu->addAction(monthReportAct);
+    reportMenu->addAction(onlineReportAct);
+
     QAction *settingsAction = new QAction(tr("Settings"), this);
     trayIconMenu->addAction(settingsAction);
     QAction *showHelp = new QAction(tr("Help"), this);
@@ -338,6 +380,10 @@ void TimePie::createTrayIcon()
     QAction *quitAction = new QAction(tr("Quit"), this);
     trayIconMenu->addAction(quitAction);
 
+    connect(todayReportAct, &QAction::triggered, this, [this]{ openReport(1); });
+    connect(weekReportAct, &QAction::triggered, this, [this]{ openReport(2); });
+    connect(monthReportAct, &QAction::triggered, this, [this]{ openReport(3); });
+    connect(onlineReportAct, &QAction::triggered, this, [this]{ openReport(0); });
     connect(showHelp, &QAction::triggered, this, &TimePie::openHelpBrowser);
     connect(quitAction, SIGNAL(triggered()), qApp, SLOT(quit()));
     connect(settingsAction, &QAction::triggered, this, &TimePie::show);
@@ -348,8 +394,168 @@ void TimePie::createTrayIcon()
     trayIcon->setIcon(thisIcon);
     setWindowIcon(thisIcon);
 
-    // show fake tooltip
-    trayIcon->setToolTip("Enhanced Sound");
+    trayIcon->setToolTip("Pertime");
+}
+
+bool TimePie::generateRport(int reportType)
+{
+    QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
+    if(!db.isOpen()){
+        return false;
+    }
+    QDateTime currentTime = QDateTime::currentDateTime();
+    int currentHour = currentTime.time().hour();
+    QDateTime startDT;
+    if(reportType == 1){
+        // today
+        if(currentHour > pts.dayStartingHour){
+            startDT = QDateTime(currentTime.date(),
+                                QTime(pts.dayStartingHour, 0));
+        }else{
+            startDT = QDateTime(currentTime.date().addDays(-1),
+                                QTime(pts.dayStartingHour, 0));
+        }
+    }else if(reportType == 2){
+        int dayOfWeek = currentTime.date().dayOfWeek();
+        startDT = QDateTime(currentTime.date().addDays(1-dayOfWeek),
+                            QTime(pts.dayStartingHour, 0));
+    }else if(reportType == 3){
+        startDT = QDateTime(currentTime.date().addDays(1-currentTime.date().day()),
+                            QTime(pts.dayStartingHour, 0));
+    }
+        // week
+    int startSecond = startDT.toSecsSinceEpoch();
+
+    QSqlQuery query = QSqlQuery(db);
+    /*
+     * this is before we introduced 'duration' column
+     * to get lastTimestamp before startSecond
+     *
+    query.prepare("SELECT timestamp FROM entry WHERE timestamp<:startSecond ORDER BY timestamp DESC LIMIT 1");
+    query.bindValue(":startSecond", startSecond);
+    if (!query.exec()){
+        odprintf("error getting report data:\n%s", query.lastError().text().toStdString().c_str());
+        return false;
+    }
+    query.next();
+    int lastTimeStamp = query.value(0).toInt();
+    */
+
+    query.prepare("SELECT pname, title, timestamp, duration FROM entry where timestamp>:startSecond order by timestamp");
+    query.bindValue(":startSecond", startSecond);
+    if (!query.exec()){
+        odprintf("error getting report data:\n%s", query.lastError().text().toStdString().c_str());
+        return false;
+    }
+
+    /*
+     * 0: program name
+     * 1: window title
+     * 2: timestamp
+     * 3: duration
+     */
+    QList<std::tuple<QString, QString, int, int>> records;
+    while (query.next()){
+        QString first = query.value(0).toString();
+        QString second = query.value(1).toString();
+        int third, fourth;
+        if(query.value(3).toInt()){
+            third = query.value(2).toInt();
+        }else{
+            third = currentTime.toSecsSinceEpoch() - query.value(2).toInt();
+        }
+        fourth = query.value(3).toInt();
+        records.append(std::make_tuple(first, second, third, fourth));
+    }
+
+    QMap<QString, int> map;
+    QVariantHash context;
+    context["startDT"] = startDT.toString("yyyy-MM-dd hh:mm");
+    QVariantList recordList;
+
+    for(const std::tuple<QString, QString, int, int> &record: records){
+        // for accumulating per program duration
+        if(map.contains(std::get<0>(record))){
+            map[std::get<0>(record)] += std::get<2>(record);
+        }else{
+            map[std::get<0>(record)] = std::get<2>(record);
+        }
+        // for report mustache template
+        QVariantHash rhash;
+        rhash["name"] = std::get<0>(record);
+        rhash["title"] = std::get<1>(record);
+        rhash["shot"] = std::get<2>(record);
+        recordList << rhash;
+    }
+    context["records"] = recordList;
+
+    QList<QPair<QString, int>> stat;
+    for(auto k:map.keys()){
+        stat.append(QPair<QString, int>(k, map[k]));
+    }
+    auto compare = [](auto &a, auto &b){
+        return a.second > b.second;
+    };
+    std::sort(stat.begin(), stat.end(), compare);
+
+    QVariantList statList;
+    for(const QPair<QString, int> &s: stat){
+        QVariantHash rhash;
+        rhash["name"] = s.first;
+        rhash["duration"] = s.second;
+        statList << rhash;
+    }
+    context["stats"] = statList;
+
+    odprintf("Report from %s", startDT.toString("yyyy-MM-dd hh:mm").toStdString().c_str());
+    for(auto &st: stat){
+        odprintf("Stat:(%d) %s", st.second, st.first.toStdString().c_str());
+    }
+
+
+    QFile templateFile(":/resource/report.html");
+    if(!templateFile.open(QIODevice::ReadOnly)){
+        odprintf("Could not open report template");
+        return false;
+    }
+    QString content = QString(templateFile.readAll());
+    Mustache::Renderer renderer;
+    Mustache::QtVariantContext vcontext(context);
+    QString outStr = renderer.render(content, &vcontext);
+
+    QString fileLocation = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    if(fileLocation.isEmpty()){
+        odprintf("Could not write desktop location");
+        return false;
+    }
+    fileLocation.append(QDir::separator()).append("pertime_report.htm");
+
+    QFile htmlFile(fileLocation);
+    if(!htmlFile.open(QIODevice::WriteOnly|QIODevice::Truncate)){
+        odprintf("Could not open report html for write.");
+        return false;
+    }
+    QTextStream outStream(&htmlFile);
+    outStream << outStr;
+    htmlFile.close();
+    QDesktopServices::openUrl(QUrl::fromLocalFile(fileLocation));
+
+    return true;
+}
+
+void TimePie::openReport(int reportType)
+{
+    QUrl url;
+    if(reportType == 1){
+        generateRport(1);
+    }else if(reportType == 2){
+        generateRport(2);
+    }else if(reportType == 3){
+        generateRport(3);
+    }else{
+        // online report
+        QDesktopServices::openUrl(QUrl(APP_WEBSITE "i", QUrl::StrictMode));
+    }
 }
 
 void TimePie::processWebServerReply(QNetworkReply *serverReply)
@@ -377,15 +583,20 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
             //writeToSharedMemory();
             ui->confirmedLabel->show();
             ui->isrunningLabel->setText("Apikey is verified.");
-        }else{
             emailAndKeyValidated = true;
-            ui->confirmedLabel->hide();
+        }else{
+            emailAndKeyValidated = false;
+            ui->isrunningLabel->setText("Not Authenticated");
+            //ui->confirmedLabel->hide();
         }
     }else if(replyType == "data"){
         if(jsonObj["result"] != "ok"){
             //TODO: what do we do here?
         }
     }else if(replyType == "upload"){
+        if(jsonObj["result"] == "noauth"){
+            emailAndKeyValidated = false;
+        }
         //odprintf("file: %s was saved on remote server", jsonObj["file"].toString().constData());
         odprintf("file: %s was saved on remote server", jsonObj["file"].toString().toStdString().c_str());
         //QString fileName = QString("%1\\%2.jpg").arg(appDataDir).arg(jsonObj["file"].toString());
@@ -415,9 +626,9 @@ void TimePie::saveConfigFile(){
     */
     QSettings settings;
     settings.beginGroup(SETTINGS_GROUP_NAME);
-    settings.setValue("Email", userEmail);
-    settings.setValue("ApiKey", userApiKey);
-    settings.setValue("ComputerName", computerName);
+    settings.setValue("email", pts.email);
+    settings.setValue("apikey", pts.apikey);
+    settings.setValue("ComputerName", pts.computerName);
     settings.endGroup();
     ui->confirmedLabel->show();
 }
@@ -501,18 +712,31 @@ void TimePie::shootScreen()
             bool ret = query.exec(sqlstr);
             */
 
+            //int thisInsertId = 0;
             QSqlQuery query = QSqlQuery(db);
-            query.prepare("INSERT INTO entry values(:timestamp, :username, :program, :wintitle, 1)");
-            query.bindValue(":timestamp", currentTime.toTime_t());
+            query.prepare("INSERT INTO entry values(:timestamp, :username, :program, :wintitle, 1, 0)");
+            query.bindValue(":timestamp", currentTime.toSecsSinceEpoch());
             query.bindValue(":username", sessionUsername);
             query.bindValue(":program", currentApplicationName);
             query.bindValue(":wintitle", currentWindowTitle);
             if (query.exec()){
                 odprintf(" -> db insert success");
                 //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
+                //thisInsertId = query.lastInsertId().toInt();
+                if(lastInsertTimeStamp){
+                    int duration =  currentTime.toSecsSinceEpoch() - lastInsertTimeStamp;
+                    query.prepare("UPDATE entry SET duration = :duration WHERE timestamp = :timestamp");
+                    query.bindValue(":duration", duration);
+                    query.bindValue(":timestamp", lastInsertTimeStamp);
+                    if(!query.exec()){
+                        odprintf("Failed to update last duration.\nError:%s", query.lastError().text().toStdString().c_str());
+                    }
+                }
             }else{
                 odprintf(" -> insert failed");
             }
+
+            lastInsertTimeStamp = currentTime.toSecsSinceEpoch();
         }
     }
 
@@ -613,6 +837,7 @@ void TimePie::sendData()
     QSqlQuery query = QSqlQuery(sqlstr, db);
     query.exec();
     QJsonArray jsonArray;
+    int resultCount = 0;
     while (query.next()){
         QJsonObject jsonObj;
         jsonObj.insert("time", query.value(0).toInt());
@@ -620,24 +845,30 @@ void TimePie::sendData()
         jsonObj.insert("pname", query.value(2).toString());
         jsonObj.insert("title", query.value(3).toString());
         jsonArray.append(jsonObj);
+        resultCount ++;
     }
 
-    QJsonObject data;
-    data["data"] = jsonArray;
-    data["email"] = userEmail;
-    data["computer"] = computerName;
-    data["apikey"] = userApiKey;
     int currentUploadTime = QDateTime::currentDateTime().toTime_t();
-    data["last"] = currentUploadTime;
-    QJsonDocument json;
-    json.setObject(data);
 
-    QUrl url(APP_WEBSITE "a/data");
-    QNetworkRequest req(url);
-    req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
-    
-    //Sending the Request
-    netManager->post(req, json.toJson());
+    if(resultCount == 0){
+        odprintf("no update since last time");
+    }else{
+        QJsonObject data;
+        data["data"] = jsonArray;
+        data["email"] = pts.email;
+        data["computer"] = pts.computerName;
+        data["apikey"] = pts.apikey;
+        data["last"] = currentUploadTime;
+        QJsonDocument json;
+        json.setObject(data);
+
+        QUrl url(APP_WEBSITE "a/data");
+        QNetworkRequest req(url);
+        req.setHeader(QNetworkRequest::ContentTypeHeader,QVariant("application/json; charset=utf-8"));
+
+        //Sending the Request
+        netManager->post(req, json.toJson());
+    }
 
     QDir dir(progDataDir + "\\shots");
     dir.setFilter(QDir::Files|QDir::NoSymLinks);
@@ -687,8 +918,15 @@ void TimePie::uploadFile(const QFileInfo fi){
     file.close();
     datas += "\r\n";
     datas += QString("--" + boundary + "\r\n").toLatin1();
-    datas += "Content-Disposition: form-data; name=\"upload\"\r\n\r\n";
-    datas += "Uploader\r\n";
+    //datas += "Content-Disposition: form-data; name=\"upload\"\r\n\r\n";
+    //datas += "Uploader\r\n";
+    datas += "Content-Disposition: form-data; name=\"email\"\r\n\r\n";
+    datas += pts.email;
+    datas += "\r\n";
+    datas += QString("--" + boundary + "\r\n").toLatin1();
+    datas += "Content-Disposition: form-data; name=\"apikey\"\r\n\r\n";
+    datas += pts.apikey;
+    datas += "\r\n";
     datas += QString("--" + boundary + "--\r\n").toLatin1();
     
     request.setRawHeader(QString("Content-Type").toLatin1(), QString("multipart/form-data; boundary=" + boundary).toLatin1());
@@ -724,6 +962,8 @@ void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &context, co
 //#endif
 }
 
+// TODO: this doesn't seem to work
+// will try put them in timepieeventfilter.cpp
 bool TimePie::nativeEvent(const QByteArray &eventType, void *message, long *result){
     Q_UNUSED(eventType);
     Q_UNUSED(result);
@@ -768,9 +1008,17 @@ bool TimePie::getConfigFromFile(){
 
 void TimePie::on_confirmButton_clicked()
 {
-    userEmail = ui->emailEdit->text();
-    userApiKey = ui->apikeyEdit->text();
-    computerName = ui->computernameEdit->text();
+    pts.email = ui->emailEdit->text();
+    pts.apikey = ui->apikeyEdit->text();
+    pts.computerName = ui->computernameEdit->text();
+    QSettings settings;
+    settings.beginGroup(SETTINGS_GROUP_NAME);
+    settings.setValue("email", pts.email);
+    if(pts.apikey != "[saved]"){
+        settings.setValue("apikey", pts.apikey);
+    }
+    settings.setValue("computerName", pts.computerName);
+    settings.endGroup();
 
     authWithWebServer();
 }
@@ -811,6 +1059,7 @@ bool IsUserAdmin(wchar_t* uname){
  * Screen capture using Windows Desktop Duplication API
  * largely based on: https://www.codeproject.com/Tips/1116253/Desktop-screen-capture-on-Windows-via-Windows-Desk
  * save to jpg see: https://github.com/microsoft/DirectXTK/blob/master/Src/ScreenGrab.cpp
+ * https://stackoverflow.com/questions/46639349/capture-screen-of-any-windows-app
  * also: https://stackoverflow.com/questions/51613903/desktopduplication-api-produces-black-frames-while-certain-applications-are-in-f
  * and: https://stackoverflow.com/questions/46145057/desktop-duplication-directx-screen-capture-fails-to-deliver-screen-updates
  * and: https://github.com/sskodje/ScreenRecorderLib - internal_recorder.cpp
@@ -1251,7 +1500,7 @@ void TimePie::on_screenshotSettingsOKButton_clicked()
     pts.isContinuousMode = ui->continuousCheckBox->isChecked();
     pts.continuousModeInterval = ui->intervalMinutesSlider->value();
     pts.noScreenshot = ui->noScreenshotCheckBox->isChecked();
-    pts.screenshotSaveDir = pts.screenshotSaveDir;
+    pts.dayStartingHour = ui->startHourComboBox->currentIndex();
 
     QSettings settings;
     settings.beginGroup(SETTINGS_GROUP_NAME);
@@ -1260,6 +1509,7 @@ void TimePie::on_screenshotSettingsOKButton_clicked()
     settings.setValue("continuousModeInterval", ui->intervalMinutesSlider->value());
     settings.setValue("noScreenshot", ui->noScreenshotCheckBox->isChecked());
     settings.setValue("screenshotSaveDir", pts.screenshotSaveDir);
+    settings.setValue("dayStartingHour", pts.dayStartingHour);
     settings.endGroup();
     ui->screenshotSettingsLabel->setText("");
     this->hide();
@@ -1277,7 +1527,7 @@ void TimePie::on_selectLocationPushButton_clicked()
     }
 }
 
-
+/*
 void TimePie::on_keepLocalCheckBox_clicked(bool checked)
 {
     if(checked){
@@ -1286,7 +1536,7 @@ void TimePie::on_keepLocalCheckBox_clicked(bool checked)
         ui->selectLocationPushButton->setDisabled(true);
     }
     ui->screenshotSettingsLabel->setText("Not Saved");
-}
+}*/
 
 void TimePie::on_continuousCheckBox_clicked(bool checked)
 {

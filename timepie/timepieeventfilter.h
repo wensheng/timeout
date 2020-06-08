@@ -5,13 +5,14 @@
 #include <QWidget>
 #include <QDebug>
 #include "timepie.h"
+//#include <Windows.h>
 #include "windows.h"
 
 class TimePieEventFilter: public QAbstractNativeEventFilter
 {
 public:
 public:
-    void setup(QWidget *target);
+    void setup(QDialog *target);
     bool nativeEventFilter(const QByteArray &eventType, void *message, long *) override;
 
 private:

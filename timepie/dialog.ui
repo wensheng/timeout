@@ -58,12 +58,199 @@
   <property name="windowTitle">
    <string>TMController</string>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout">
+  <layout class="QHBoxLayout" name="horizontalLayout_5">
    <item>
     <widget class="QTabWidget" name="tabWidget">
      <property name="currentIndex">
-      <number>1</number>
+      <number>0</number>
      </property>
+     <widget class="QWidget" name="tab_2">
+      <attribute name="title">
+       <string>Settings</string>
+      </attribute>
+      <widget class="QCheckBox" name="noScreenshotCheckBox">
+       <property name="geometry">
+        <rect>
+         <x>30</x>
+         <y>260</y>
+         <width>211</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>No Screenshot</string>
+       </property>
+      </widget>
+      <widget class="QCheckBox" name="keepLocalCheckBox">
+       <property name="geometry">
+        <rect>
+         <x>30</x>
+         <y>30</y>
+         <width>181</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Keep local copies</string>
+       </property>
+      </widget>
+      <widget class="QPushButton" name="selectLocationPushButton">
+       <property name="geometry">
+        <rect>
+         <x>50</x>
+         <y>71</y>
+         <width>111</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Select Location:</string>
+       </property>
+      </widget>
+      <widget class="QLabel" name="folderPath">
+       <property name="geometry">
+        <rect>
+         <x>170</x>
+         <y>70</y>
+         <width>361</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>folder path</string>
+       </property>
+      </widget>
+      <widget class="QCheckBox" name="continuousCheckBox">
+       <property name="geometry">
+        <rect>
+         <x>30</x>
+         <y>120</y>
+         <width>161</width>
+         <height>17</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Continous mode</string>
+       </property>
+      </widget>
+      <widget class="QWidget" name="horizontalLayoutWidget">
+       <property name="geometry">
+        <rect>
+         <x>50</x>
+         <y>150</y>
+         <width>561</width>
+         <height>78</height>
+        </rect>
+       </property>
+       <layout class="QHBoxLayout" name="horizontalLayout_4">
+        <item>
+         <widget class="QLabel" name="label_6">
+          <property name="text">
+           <string>Interval</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSlider" name="intervalMinutesSlider">
+          <property name="minimum">
+           <number>2</number>
+          </property>
+          <property name="maximum">
+           <number>30</number>
+          </property>
+          <property name="singleStep">
+           <number>2</number>
+          </property>
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="intervalMinutesLabel">
+          <property name="text">
+           <string>2</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="label_5">
+          <property name="text">
+           <string>minutes</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QPushButton" name="screenshotSettingsOKButton">
+       <property name="geometry">
+        <rect>
+         <x>550</x>
+         <y>390</y>
+         <width>101</width>
+         <height>41</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Save Settings</string>
+       </property>
+      </widget>
+      <widget class="QLabel" name="screenshotSettingsLabel">
+       <property name="geometry">
+        <rect>
+         <x>50</x>
+         <y>370</y>
+         <width>461</width>
+         <height>61</height>
+        </rect>
+       </property>
+       <property name="styleSheet">
+        <string notr="true">color:rgb(255, 0, 0);</string>
+       </property>
+       <property name="text">
+        <string>status</string>
+       </property>
+      </widget>
+      <widget class="QPushButton" name="openFolderPushButton">
+       <property name="geometry">
+        <rect>
+         <x>550</x>
+         <y>70</y>
+         <width>101</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Open Folder</string>
+       </property>
+      </widget>
+      <widget class="QComboBox" name="startHourComboBox">
+       <property name="geometry">
+        <rect>
+         <x>280</x>
+         <y>320</y>
+         <width>69</width>
+         <height>22</height>
+        </rect>
+       </property>
+       <property name="currentText">
+        <string/>
+       </property>
+      </widget>
+      <widget class="QLabel" name="label_8">
+       <property name="geometry">
+        <rect>
+         <x>30</x>
+         <y>320</y>
+         <width>231</width>
+         <height>21</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Select the hour that start a day:</string>
+       </property>
+      </widget>
+     </widget>
      <widget class="QWidget" name="tab">
       <attribute name="title">
        <string>Account</string>
@@ -309,164 +496,34 @@
        </property>
       </widget>
      </widget>
-     <widget class="QWidget" name="tab_2">
+     <widget class="QWidget" name="tab_3">
       <attribute name="title">
-       <string>Screenshot Settings</string>
+       <string>About</string>
       </attribute>
-      <widget class="QCheckBox" name="noScreenshotCheckBox">
+      <widget class="QPushButton" name="pushButton">
        <property name="geometry">
         <rect>
-         <x>30</x>
-         <y>260</y>
-         <width>211</width>
+         <x>20</x>
+         <y>20</y>
+         <width>201</width>
          <height>31</height>
         </rect>
        </property>
        <property name="text">
-        <string>No Screenshot</string>
+        <string>Check Update</string>
        </property>
       </widget>
-      <widget class="QCheckBox" name="keepLocalCheckBox">
+      <widget class="QLabel" name="label_7">
        <property name="geometry">
         <rect>
-         <x>30</x>
-         <y>30</y>
-         <width>181</width>
+         <x>250</x>
+         <y>20</y>
+         <width>401</width>
          <height>31</height>
         </rect>
        </property>
        <property name="text">
-        <string>Keep local copies</string>
-       </property>
-      </widget>
-      <widget class="QPushButton" name="selectLocationPushButton">
-       <property name="geometry">
-        <rect>
-         <x>50</x>
-         <y>71</y>
-         <width>111</width>
-         <height>31</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>Select Location:</string>
-       </property>
-      </widget>
-      <widget class="QLabel" name="folderPath">
-       <property name="geometry">
-        <rect>
-         <x>170</x>
-         <y>70</y>
-         <width>361</width>
-         <height>31</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>folder path</string>
-       </property>
-      </widget>
-      <widget class="QCheckBox" name="continuousCheckBox">
-       <property name="geometry">
-        <rect>
-         <x>30</x>
-         <y>120</y>
-         <width>161</width>
-         <height>17</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>Continous mode</string>
-       </property>
-      </widget>
-      <widget class="QWidget" name="horizontalLayoutWidget">
-       <property name="geometry">
-        <rect>
-         <x>50</x>
-         <y>150</y>
-         <width>561</width>
-         <height>78</height>
-        </rect>
-       </property>
-       <layout class="QHBoxLayout" name="horizontalLayout_4">
-        <item>
-         <widget class="QLabel" name="label_6">
-          <property name="text">
-           <string>Interval</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QSlider" name="intervalMinutesSlider">
-          <property name="minimum">
-           <number>2</number>
-          </property>
-          <property name="maximum">
-           <number>30</number>
-          </property>
-          <property name="singleStep">
-           <number>2</number>
-          </property>
-          <property name="orientation">
-           <enum>Qt::Horizontal</enum>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="intervalMinutesLabel">
-          <property name="text">
-           <string>2</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="label_5">
-          <property name="text">
-           <string>minutes</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </widget>
-      <widget class="QPushButton" name="screenshotSettingsOKButton">
-       <property name="geometry">
-        <rect>
-         <x>550</x>
-         <y>390</y>
-         <width>101</width>
-         <height>41</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>Save Settings</string>
-       </property>
-      </widget>
-      <widget class="QLabel" name="screenshotSettingsLabel">
-       <property name="geometry">
-        <rect>
-         <x>50</x>
-         <y>370</y>
-         <width>461</width>
-         <height>61</height>
-        </rect>
-       </property>
-       <property name="styleSheet">
-        <string notr="true">color:rgb(255, 0, 0);</string>
-       </property>
-       <property name="text">
-        <string>status</string>
-       </property>
-      </widget>
-      <widget class="QPushButton" name="openFolderPushButton">
-       <property name="geometry">
-        <rect>
-         <x>550</x>
-         <y>70</y>
-         <width>101</width>
-         <height>31</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>Open Folder</string>
+        <string>versionLabel</string>
        </property>
       </widget>
      </widget>

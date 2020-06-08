@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-9aIt2nRpC12Uk9gS9baDl411NQApFmC26EwAOH8WgZl5MYYxFfc+NcPb1dKGj7Sk" crossorigin="anonymous">
+</head>
+<body>
+  <div class="row">
+    <h2>Pertime Report for {{reportRange}} (Starting from: {{startTime}}</h2>
+  </div>
+  <div class="row">
+    <div class="center-block" id="main-chart" style="width:600px;height:600px;">
+    </div>
+  </div>
+  <div class="container">
+	  <div class="panel-body">
+		  <div class="table-responsive">
+  <table class="table table-striped">
+    <tr>
+	    <th class="col-md-2"> </th>
+	    <th class="col-md-2">time</th>
+	    <th class="col-md-2">program</th>
+	    <th class="col-md-6">title</th>
+    </tr>
+    {{#records}}
+    <tr>
+      <td><a href="#{{record[0]}}" class="osnap">screenshot</a></td>
+      <td>{{shot}}</a></td>
+      <td>{{name}}</td>
+      <td>{{title}}</td>
+    </tr>
+    {{/records}}
+  </table>
+		  </div>
+	  </div>
+  </div>
+  <div class="modal" id="myModal">
+    <div class="modal-header">
+      <button class="close" data-dismiss="modal">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="snap"></div>
+    </div>
+    <div class="modal-footer">
+      <a href="#" class="btn">Close</a>
+    </div>
+  </div>  
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js" integrity="sha384-OgVRvuATP1z7JjHLkuOU7Xw704+h835Lr+6QL9UvYjZE3Ipu6Tp75j7Bh/kR0JKI" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/4.8.0/echarts.min.js"></script>
+<script>
+  var chart = echarts.init(document.getElementById('main-chart'));
+  var chart_option = {
+    title : {
+        text: 'Pertime',
+        subtext: 'Where did your time go?',
+        x:'center'
+    },
+    legend: {
+        orient: 'vertical',
+        left: 'left',
+        data: []
+    },
+    tooltip : {
+        trigger: 'item',
+        formatter: "{a} <br/>{b} : {c} ({d}%)"
+    },
+    series : [
+        {
+            name: '',
+            type: 'pie',
+            radius : '55%',
+            center: ['50%', '60%'],
+            data:[],
+            itemStyle: {
+                emphasis: {
+                    shadowBlur: 10,
+                    shadowOffsetX: 0,
+                    shadowColor: 'rgba(0, 0, 0, 0.5)'
+                }
+            }
+        }
+    ]
+  };
+
+  {{#stats}}
+   chart_option.legend.data.push("{{name}}");
+   chart_option.series[0].data.push({"name": "{{name}}", "value": {{duration}} });
+  {{/stats}}
+
+  chart.setOption(chart_option);
+
+
+  $.fn.ready(function(){
+     $('.btn').on('click', function(){
+         $('.btn-info').removeClass("btn-info").addClass("btn-default");
+         $(this).addClass("btn-info");
+         get_stat(this.id);
+     });
+     $('.osnap').on('click', function(){
+       var timet = this.hash.substr(1);
+       var img_src = "/static/uploads/users/" + $('#userid').val() + "/" + timet.substr(0,5) + "/" + timet + ".jpg";
+       $('<img src="' + img_src + '" />').appendTo("#snap");
+       $('#myModal').modal("show");
+     });
+     $('#myModal').on("hidden.bs.modal", function (){
+       $('#snap').empty();
+     });
+     get_stat("last-hour");
+  });
+</script>
+</body>
+</html>
