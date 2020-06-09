@@ -5,58 +5,96 @@
   <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-9aIt2nRpC12Uk9gS9baDl411NQApFmC26EwAOH8WgZl5MYYxFfc+NcPb1dKGj7Sk" crossorigin="anonymous">
   <link href="https://cdn.datatables.net/1.10.21/css/dataTables.bootstrap4.min.css" rel="stylesheet">
 </head>
-<body>
-  <div class="row">
-    <h2>Pertime Report for {{reportRange}} (Starting from: {{startTime}}</h2>
-  </div>
-  <div class="row">
-    <div class="center-block" id="main-chart" style="width:600px;height:600px;">
+<body style="padding:0px;overflow-x:hidden;">
+  <div class="wrapper" style="background-color:#eef5f9;">
+    <div class="row">
+      <div class="col-md-12 text-center">
+        <h2>Pertime Report for {{reportType}} (Starting from: {{startTime}})</h2>
+      </div>
     </div>
-  </div>
-  <div class="container">
-	  <div class="panel-body">
-		  <div class="table-responsive">
-  <table id="records_table" class="display table table-striped">
-    <thead>
-      <tr>
-	    <th class="col-md-2">time</th>
-	    <th class="col-md-2">screenshots</th>
-	    <th class="col-md-2">program</th>
-	    <th class="col-md-6">title</th>
-      </tr>
-    </thead>
-    <tbody>
-    {{#records}}
-    <tr>
-      <td>{{shot}}</a></td>
-      <td><a href="#{{shot}}" class="osnap">screenshot</a></td>
-      <td>{{name}}</td>
-      <td>{{title}}</td>
-    </tr>
-    {{/records}}
-    </tbody>
-  </table>
-		  </div>
-	  </div>
-  </div>
-  <div class="modal" id="myModal">
-    <div class="modal-dialog modal-lg">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">screenshot</h5>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-            <span aria-hidden="true">&times;</span>
-          </button>
+    <div class="row">
+      <div class="col-md-1"> </div>
+      <div class="col-md-5">
+        <div class="card">
+          <div class="card-body">
+            <div class="center-block" id="main-chart" style="height:500px;"> </div>
+          </div>
         </div>
-        <div class="modal-body">
-          <div id="snap"></div>
+      </div>
+      <div class="col-md-5">
+        <div class="card rounded">
+          <div class="card-body">
+              <table id="usage_table" class="table table-sm table-striped table-bordered">
+                <thead>
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">App Name</th>
+                    <th scope="col">Minutes Spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{#stats}}
+                   <tr><td> </td><td>{{name}}</td><td>{{minutes}}</td></tr>
+                  {{/stats}}
+                </tbody>
+              </table>
+          </div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+      </div>
+      <div class="col-md-1"> </div>
+    </div>
+    <div class="row" style="margin-top:20px;">
+      <div class="container">
+        <div class="card">
+          <div class="card-header text-center">
+            <b>Detailed Time Log</b>
+          </div>
+          <div class="card-body" style="background-color:#fff;padding:">
+        	  <div class="table-responsive">
+              <table id="records_table" class="display table table-striped">
+                <thead>
+                  <tr>
+                    <th style="width: 15%;">time</th>
+                    <th style="width: 10%;">screenshots</th>
+                    <th style="width: 25%;">program</th>
+                    <th style="width: 50%;">title</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {{#records}}
+                <tr>
+                  <td>{{ts}}</a></td>
+                  <td><a href="#{{shot}}" class="osnap"> &nbsp; ↪ &nbsp;</a></td>
+                  <td>{{name}}</td>
+                  <td>{{title}}</td>
+                </tr>
+                {{/records}}
+                </tbody>
+              </table>
+        	  </div>
+          </div>
         </div>
       </div>
     </div>
-  </div>  
+    <div class="modal" id="myModal">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">screenshot</h5>
+            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="snap"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>  
+  </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js" integrity="sha384-OgVRvuATP1z7JjHLkuOU7Xw704+h835Lr+6QL9UvYjZE3Ipu6Tp75j7Bh/kR0JKI" crossorigin="anonymous"></script>
 <script src="https://cdn.datatables.net/1.10.21/js/jquery.dataTables.min.js"></script>
@@ -66,18 +104,17 @@
   var chart = echarts.init(document.getElementById('main-chart'));
   var chart_option = {
     title : {
-        text: 'Pertime',
-        subtext: 'Where did your time go?',
-        x:'center'
+        text: 'Where did your time go?',
+        left:'center'
+    },
+    tooltip : {
+        trigger: 'item',
+        formatter: "{a} <br/>{b} : {c} ({d}%)"
     },
     legend: {
         orient: 'vertical',
         left: 'left',
         data: []
-    },
-    tooltip : {
-        trigger: 'item',
-        formatter: "{a} <br/>{b} : {c} ({d}%)"
     },
     series : [
         {
@@ -118,6 +155,8 @@
      });
      $('#records_table').DataTable({"order": [[0, "desc"]]});
   });
+  var appIcons = {
+'chrome': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAABmJLR0QAAAAAAAD5Q7t/AAAAB3RJTUUH5AYIFS0nlDigZAAABitJREFUWMPFl11sHcUVx39ndtcf19fXdhLbiaNbQz4JiVOhYgerCBSJGgzCEB6IinFAKAap6UNVtW8VUhHPVR9aVQ2kqDE8GCVSK1KRIKHGLcVqGkGjmKiqDHFiTOLgxI4/rq99d+f0Ye/HXvveEEQlZjSa1ezMnv/5z/+cnYFvucjtThzrfbIKqNXAvxfkAKjmlgsWaxG19qgYc1ZF5jYPnkj/3wCM9fZ02EzwNMKz6vuVqNYDYBUImyoAM2KcJdS+KY7z9qbjp858IwBjB55Kqu//Qn3/EbX2O1hLzlIIwIa9Kormn1HAyGUxzknjOK/eefzU+NcGcPGHPUnUvq5B0IUqmjOWMxIFAKhm2VBAC+NinPdU9eCWd/5aEoQpNTj6TM8htcGxnPHwS1JsfJUnJcZV0cDvQu2xT5/4waHbYuDcU13JSpFBV0ynCEjWoKpm6S2xBZSZk9cIIDKMyP4tJ4aKmChi4Lc/2rdxKQhey/h+p9XIfq80vIoJQQt6LLyXLHMKWO0UeG3syYc2lgXw/ubal0er5OFM4BMEPqq2NOWqYC3WWoJoUyVQwoaEvc2NKb4fPLyc8V+OfsrNPWwf/HHniL/c3dgaZ/3IddwgQBA8E8FoLVpRgUm2Unn3Lrzm9eCAPzdO6ovzBDOjiE1jjMEIiAERxTFgDDgG3Ljtnj90f2f80Q+G8wC+O/hTNxWk9vlC8uymerZfWaBzKo2D4ADGGLAWad5AdXcPsruDK36C6SUPBBqqlmm5fxb5cpjli8eQpc/xPIPnGVwPXFdCEA4oJI3j7NP/PvYv2fYX3wVYtIvrrGofqtyIewxvruOO64u4QYAjgqCY5hbizzzPZGs7J0cMFyZgeiEkpj5Wwd0t6+hue4yNbU04E4ep0is4roMxWR0YQDSrR9PH3PKvgKsuQMbae6z6sZygzrcmuGtijrqxWTyB6ooYNY/2MNnazpG/GUavhTIwEvbXZsM2fsPQ/0A7m1uncafewLC0OtZCtcbUsfcA75pwzPahJEIVKynP8OG2NUzEXBYyGUi2Im0dnBwJjQsF41BIEaOT8O55Q6qqnaDyjmwUFKk3FyYJUfoiUaBFaURU+aypmjN31jFvLe6OnXzhJ7gwcetoVOCTCbh8M4GN7fyKyVIIQ80lm0j1HWF4awOXEhV4jc3MLFUwvRB6vupbOSaAGym4kfLAWx+ZUyKPYCMA8jVCkirXEh5D29cw7xpyeT6f7Cj0xV5SppRmwwBYVbREsygftSa4YG+yxstQXxNm13yCXOmTQkMNrIllIDOJmPJgcmvNrUCLwmzM4UT6EnWxBXa2FBgqtb0C7GyBZN0CJnXhFvSTV24O44CqzpZiAYUPlq/y9+kRHmmzbG3KZuLIdgTZjL2lGbp3W0h9hFm+uFosOe+VWYSBiAjtx4qmtEgNhTIfLPG70fe55H9C/4OWvXdBU22YWh0DTQnYuwMOPmjBnkOm/4RDquyvGzRlM/ZjKPwLpoAB4Ocrd0lVERE+m5vk1XPH6d92k8fbd7F3R5y5xXB5bbVPPDbPP6/+mw0L79AWv/xVIhxQ1SmIpImWPz7XqaqDCsnoi+gyq5Zqt5Jd9Unua9xKMr4WgPGbU/zj8/+QyFzkN1uu0+gtlwWgquNBoPu9PUPDRQAANrzR93sVebG8ZnOhVzSCpi211vLrrWmeWLtALsZXGQdsoIfdjtMv5d4UB4rKK8AppbhGjedFnGsWUKF7bcBDDemyxrPen7LoK9G3RQCuvHB0QtF+lOHo6SpUfQlAKFaVJjfgufVL1JgM5Yoqwyj9FR1DE2UBAEw+PzCO5S3gzEomsjeAsGp4F9BA2d/o8734YgnPQ7DW6hnfyltO++lVJ+Oyx/LGP/QmUXldjXaV2gIlPGq1eQFHNs2xLZaOsK35+dbqe6p60NszVPJY7pQDkPrz+dl4z+4hoAZoRKhbmR8qUX7SlKarYbHI49BrLlvVQWv1ZxX3DX39i0m0NB/p7QjgaVSftaKVKtSrwgOxgCObZljnZvJXM9/qkiBvWtW3K/ec/mZXs2hpOtxbBVobONyr6AF89JctaV5qmgn1IIiIHA18e1ZV5mq+f/q2LqffevkfvZOT/vaF85YAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjAtMDYtMDhUMjE6NDU6MzktMDU6MDByywZfAAAAJXRFWHRkYXRlOm1vZGlmeQAyMDIwLTA2LTA4VDIxOjQ1OjM5LTA1OjAwA5a+4wAAAEN0RVh0c29mdHdhcmUAZmlsZTovLy91c3Ivc2hhcmUvZG9jL2ltYWdlbWFnaWNrLTYtY29tbW9uL2h0bWwvaW5kZXguaHRtbA/X5TgAAAAYdEVYdFRodW1iOjpEb2N1bWVudDo6UGFnZXMAMaf/uy8AAAAXdEVYdFRodW1iOjpJbWFnZTo6SGVpZ2h0ADQ4h2CHLQAAABZ0RVh0VGh1bWI6OkltYWdlOjpXaWR0aAA0OH/PR6AAAAAZdEVYdFRodW1iOjpNaW1ldHlwZQBpbWFnZS9pY2+XMDjOAAAAF3RFWHRUaHVtYjo6TVRpbWUAMTU5MTY3MDczObF9kdYAAAATdEVYdFRodW1iOjpTaXplADMuNzdLQkLMCXUxAAAAF3RFWHRUaHVtYjo6VVJJAGZpbGU6Ly8zLmljb2bXj64AAAAASUVORK5CYII='};
 </script>
 </body>
 </html>

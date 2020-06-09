@@ -403,11 +403,13 @@ bool TimePie::generateRport(int reportType)
     if(!db.isOpen()){
         return false;
     }
+
+    QVariantHash context;
     QDateTime currentTime = QDateTime::currentDateTime();
     int currentHour = currentTime.time().hour();
     QDateTime startDT;
     if(reportType == 1){
-        // today
+        context["reportType"] = QString("Today");
         if(currentHour > pts.dayStartingHour){
             startDT = QDateTime(currentTime.date(),
                                 QTime(pts.dayStartingHour, 0));
@@ -416,14 +418,19 @@ bool TimePie::generateRport(int reportType)
                                 QTime(pts.dayStartingHour, 0));
         }
     }else if(reportType == 2){
+        context["reportType"] = QString("This Week");
         int dayOfWeek = currentTime.date().dayOfWeek();
         startDT = QDateTime(currentTime.date().addDays(1-dayOfWeek),
                             QTime(pts.dayStartingHour, 0));
     }else if(reportType == 3){
+        context["reportType"] = QString("This Month");
         startDT = QDateTime(currentTime.date().addDays(1-currentTime.date().day()),
                             QTime(pts.dayStartingHour, 0));
+    }else{
+        return false;
     }
-        // week
+    context["startTime"] = startDT.toString("yyyy-MM-dd hh:mm");
+
     int startSecond = startDT.toSecsSinceEpoch();
 
     QSqlQuery query = QSqlQuery(db);
@@ -464,27 +471,34 @@ bool TimePie::generateRport(int reportType)
             te3 = query.value(3).toInt();
         }else{
             // this is latest entry with duration=0
-            te3 = currentTime.toSecsSinceEpoch() - query.value(2).toInt();
+            // or the record just before exiting the program
+            //te3 = currentTime.toSecsSinceEpoch() - query.value(2).toInt(); // this is wrong
+            te3 = 0;
         }
         records.append(std::make_tuple(te0, te1, te2, te3));
     }
 
     QMap<QString, int> map;
-    QVariantHash context;
     context["startDT"] = startDT.toString("yyyy-MM-dd hh:mm");
     QVariantList recordList;
 
     for(const std::tuple<QString, QString, int, int> &record: records){
         // for accumulating per program duration
         if(map.contains(std::get<0>(record))){
-            map[std::get<0>(record)] += std::get<2>(record);
+            map[std::get<0>(record)] += std::get<3>(record);
         }else{
-            map[std::get<0>(record)] = std::get<2>(record);
+            map[std::get<0>(record)] = std::get<3>(record);
         }
         // for report mustache template
         QVariantHash rhash;
-        rhash["name"] = std::get<0>(record);
+        QStringList slist = std::get<0>(record).split(QDir::separator());
+        if(slist.isEmpty()){
+            rhash["name"] = "";
+        }else{
+            rhash["name"] = slist.last();
+        }
         rhash["title"] = std::get<1>(record);
+        rhash["ts"] = QDateTime::fromSecsSinceEpoch(std::get<2>(record)).toString("yyyy/MM/dd hh:mm");
         rhash["shot"] = std::get<2>(record);
         recordList << rhash;
     }
@@ -500,14 +514,35 @@ bool TimePie::generateRport(int reportType)
     std::sort(stat.begin(), stat.end(), compare);
 
     QVariantList statList;
+    int appCount = 0;
+    int othersDuration = 0;
     for(const QPair<QString, int> &s: stat){
         QStringList slist = s.first.split(QDir::separator());
         if(slist.isEmpty()){
             continue;
         }
+        if(appCount<10){
+            QVariantHash rhash;
+            rhash["name"] = slist.last();
+            rhash["duration"] = s.second;
+            rhash["minutes"] = ceil(s.second / 60.0);
+            if(s.second>=3600){
+                rhash["minutes"] = rhash["minutes"].toString() + " (" + QString::number(s.second/3600.0, 'f', 1) + " hours)";
+            }
+            statList << rhash;
+        }else{
+            othersDuration += s.second;
+        }
+        appCount++;
+    }
+    if(othersDuration){
         QVariantHash rhash;
-        rhash["name"] = slist.last();
-        rhash["duration"] = s.second;
+        rhash["name"] = "Others";
+        rhash["duration"] = othersDuration;
+        rhash["minutes"] = ceil(othersDuration / 60.0);
+        if(othersDuration >= 3600){
+            rhash["minutes"] = rhash["minutes"].toString() + " (" + QString::number(othersDuration/3600.0, 'f', 1) + " hours)";
+        }
         statList << rhash;
     }
     context["stats"] = statList;
