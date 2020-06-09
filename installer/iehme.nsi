@@ -1,6 +1,6 @@
 ; ieh nsis script
-!define PRODUCT_NAME "ieh.me"
-!define PRODUCT_VERSION "0.4.0"
+!define PRODUCT_NAME "PertimeDesktop"
+!define PRODUCT_VERSION "0.1.0"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
 
@@ -30,7 +30,7 @@ SetCompressor lzma
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 
 ; The file to write
-OutFile "iehsetup.exe"
+OutFile "PertimeDesktop-0.1.0-setup.exe"
 
 ; The default installation directory
 InstallDir $PROGRAMFILES32\ieh.me

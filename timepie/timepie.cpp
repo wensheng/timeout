@@ -84,8 +84,11 @@ TimePie::TimePie(QWidget *parent):
     //QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     //progDataDir = env.value("ALLUSERSPROFILE");
     //progDataDir.append("\\TimePie");
-
     progDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir dir = QDir(progDataDir);
+    if(!dir.exists()){
+        dir.mkpath(".");
+    }
 
     /*
      * session username base64 encoded
@@ -278,6 +281,19 @@ void TimePie::toggleTimers(bool pause)
     if(pause){
         mainTimer->stop();
         dataTimer->stop();
+        QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
+        if(db.isOpen()){
+            QSqlQuery query = QSqlQuery(db);
+            if(lastInsertTimeStamp){
+                int duration =  QDateTime::currentDateTime().toSecsSinceEpoch() - lastInsertTimeStamp;
+                query.prepare("UPDATE entry SET duration = :duration WHERE timestamp = :timestamp");
+                query.bindValue(":duration", duration);
+                query.bindValue(":timestamp", lastInsertTimeStamp);
+                if(!query.exec()){
+                    odprintf("Failed to update last duration.\nError:%s", query.lastError().text().toStdString().c_str());
+                }
+            }
+        }
     }else{
         mainTimer->start();
         dataTimer->start();
@@ -290,7 +306,7 @@ void TimePie::initData()
     db = QSqlDatabase::addDatabase("QSQLITE", DATABASE_NAME);
 
     QString dbPath(progDataDir);
-    dbPath.append("\\timepie.db");
+    dbPath.append("/timepie.db");
     //connect to sqlite db "timepie.db" in the installation directory
     //create table `entry` if not already exists
     db.setDatabaseName(dbPath);
@@ -317,7 +333,7 @@ void TimePie::initData()
     }
 
     QString shotsDir(progDataDir);
-    shotsDir.append("\\shots");
+    shotsDir.append("/shots");
     QDir dir = QDir(shotsDir);
     if(!dir.exists()){
         dir.mkpath(".");

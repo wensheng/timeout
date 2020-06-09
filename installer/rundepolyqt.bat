@@ -1,2 +1,2 @@
-D:\Programs\qt\Qt5.10.1\5.10.1\msvc2015\bin\windeployqt.exe ..\build-timeout-Desktop_Qt_5_10_1_MSVC2015_32bit-Debug\debug\timeout.exe
-D:\Programs\qt\Qt5.10.1\5.10.1\msvc2015\bin\windeployqt.exe ..\build-timepie-Desktop_Qt_5_10_1_MSVC2015_32bit-Release\release\timepie.exe
+SET DEPLOYEXE=C:\Qt\5.15.0\msvc2019_64\bin\windeployqt.exe
+%DEPLOYEXE% ..\build-timepie-Desktop_Qt_5_15_0_MSVC2019_64bit-Release\release\timepie.exe
