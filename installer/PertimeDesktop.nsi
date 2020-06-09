@@ -42,6 +42,7 @@ BrandingText " "
 Section "MainSection" SEC01
   SetOutPath "$INSTDIR\*.*"
   SetOverwrite ifnewer
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" '"$InstDir\timepie.exe"'
   WriteUninstaller "$InstDir\Uninst.exe"
   File /r "files\*.*"
 SectionEnd

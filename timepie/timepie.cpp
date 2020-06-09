@@ -13,6 +13,7 @@
 #include "ui_dialog.h"
 #include "timepieeventfilter.h"
 #include "simplecrypt.h"
+#include "QSimpleUpdater.h"
 #include <tuple>
 #include <fstream>
 #include <sstream>
@@ -60,6 +61,7 @@ TimePie::TimePie(QWidget *parent):
     lastScreenShotTime = 0;
     lastUploadTime = 0;
     lastInsertTimeStamp = 0;
+    //m_updater = QSimpleUpdater::getInstance();
 
     /*
      * session username
@@ -75,7 +77,6 @@ TimePie::TimePie(QWidget *parent):
     }else{
         odprintf("user NOT admin");
     }
-
 
 
     /*
@@ -152,6 +153,7 @@ TimePie::TimePie(QWidget *parent):
     }
     //QStringList hoursOfDay = {"0", "1", "2", "3", "4"};
     //ui->startHourComboBox->addItems(hoursOfDay);
+    ui->versionLabel->setText(APPLICATION_NAME  " " APPLICATION_VERSION);
 
 
     /*
@@ -568,7 +570,13 @@ bool TimePie::generateRport(int reportType)
         odprintf("Stat:(%d) %s", st.second, st.first.toStdString().c_str());
     }
 
-    context["screenshotLocation"] = pts.screenshotSaveDir;
+    if(pts.screenshotSaveDir.isEmpty()){
+        QString shotsDir(progDataDir);
+        shotsDir.append("/shots");
+        context["screenshotLocation"] = shotsDir;
+    }else{
+        context["screenshotLocation"] = pts.screenshotSaveDir;
+    }
 
 
     QFile templateFile(":/resource/report.html");
@@ -862,15 +870,19 @@ void TimePie::shootScreen()
             //originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
         }
     }
-    QDir copyDir = QDir(pts.screenshotSaveDir);
-    if(pts.keepLocalCopies && copyDir.exists()){
-        QFile imgFile(fileName);
-        if(imgFile.exists()){
-            QString copyFileName = QString("%1/%2.jpg").arg(pts.screenshotSaveDir).arg(currentTime.toTime_t());
-            if(emailAndKeyValidated){
-                imgFile.copy(copyFileName);
-            }else{
-                imgFile.rename(copyFileName);
+    if(pts.keepLocalCopies){
+        if(!pts.screenshotSaveDir.isEmpty()){
+            QDir copyDir = QDir(pts.screenshotSaveDir);
+            if(copyDir.exists()){
+                QFile imgFile(fileName);
+                if(imgFile.exists()){
+                    QString copyFileName = QString("%1/%2.jpg").arg(pts.screenshotSaveDir).arg(currentTime.toTime_t());
+                    if(emailAndKeyValidated){
+                        imgFile.copy(copyFileName);
+                    }else{
+                        imgFile.rename(copyFileName);
+                    }
+                }
             }
         }
     }
@@ -1545,8 +1557,16 @@ void TimePie::captureFullScreenDDA(QString filename)
 void TimePie::on_screenshotSettingsOKButton_clicked()
 {
     if(ui->keepLocalCheckBox->isChecked()){
-        pts.screenshotSaveDir =  ui->folderPath->text();
-        odprintf("screenshotSaveDir=%s", pts.screenshotSaveDir.toStdString().c_str());
+
+        QDir folder = QDir(ui->folderPath->text());
+        if(folder.exists()){
+            pts.screenshotSaveDir =  ui->folderPath->text();
+            odprintf("screenshotSaveDir=%s", pts.screenshotSaveDir.toStdString().c_str());
+        }else{
+            ui->folderPath->setText(pts.screenshotSaveDir);
+        }
+    }else{
+        pts.screenshotSaveDir = "";
     }
 
     //if(pts.keepLocalCopies){
@@ -1629,4 +1649,25 @@ void TimePie::on_openFolderPushButton_clicked()
         ui->screenshotSettingsLabel->setText("folder can not be opened.");
 
     }
+}
+
+void TimePie::on_keepLocalCheckBox_clicked(bool checked)
+{
+    if(checked==false){
+        ui->folderPath->clear();
+        ui->screenshotSettingsLabel->setText("Not Saved");
+    }
+}
+
+void TimePie::on_pushButton_clicked()
+{
+    QSimpleUpdater *updater = QSimpleUpdater::getInstance();
+    updater->setModuleVersion(UPDATE_DEFS_URL, APPLICATION_VERSION); //installed version
+    updater->setNotifyOnFinish(UPDATE_DEFS_URL, false);
+    updater->setNotifyOnUpdate(UPDATE_DEFS_URL, true);
+    updater->setUseCustomAppcast(UPDATE_DEFS_URL, false);
+    updater->setDownloaderEnabled(UPDATE_DEFS_URL, true);
+    updater->setMandatoryUpdate(UPDATE_DEFS_URL, false);
+    /* Check for updates */
+    updater->checkForUpdates(UPDATE_DEFS_URL);
 }

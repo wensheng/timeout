@@ -1,3 +1,6 @@
 [submodule "timepie/DirectXTK"]
 	path = timepie/DirectXTK
 	url = https://github.com/microsoft/DirectXTK.git
+[submodule "timepie/3rdParty/QSimpleUpdater"]
+	path = timepie/3rdParty/QSimpleUpdater
+	url = https://github.com/alex-spataru/QSimpleUpdater.git

@@ -13,10 +13,10 @@
 #define APP_TEST_WEBSITE "http://192.168.2.116:3399/"
 #define DATABASE_NAME "pertime"
 #define SETTINGS_GROUP_NAME "Dialog"
+#define UPDATE_DEFS_URL "https://pertime.org/PertimeDesktop/updates.json"
 //#define WIN32_LEAN_AND_MEAN
 
 const unsigned int SameAppScreenShotInterval = 12; // minutes
 const unsigned int DefaultDataInterval = 300000; // 5 min
 const unsigned int mainTimerInterval = 30000; // 30 seconds
-
 #endif

@@ -10,6 +10,7 @@
 #ifndef TIMEPIE_H
 #define TIMEPIE_H
 
+#include "QSimpleUpdater.h"
 #include <QApplication>
 #include <QtGui>
 #include <QStandardPaths>
@@ -101,6 +102,10 @@ private slots:
     void on_noScreenshotCheckBox_clicked(bool checked);
     void on_openFolderPushButton_clicked();
 
+    void on_keepLocalCheckBox_clicked(bool checked);
+
+    void on_pushButton_clicked();
+
 private:
     void saveSettings();
     void createIconGroupBox();
@@ -148,6 +153,7 @@ private:
     bool ddaInitialized;
     bool frameReleased;
     PTSettings pts;
+    //QSimpleUpdater *m_updater;
 };
 
 //! [0]
