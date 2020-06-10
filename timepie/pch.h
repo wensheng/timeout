@@ -16,7 +16,10 @@
 #define UPDATE_DEFS_URL "https://pertime.org/PertimeDesktop/updates.json"
 //#define WIN32_LEAN_AND_MEAN
 
-const unsigned int SameAppScreenShotInterval = 12; // minutes
-const unsigned int DefaultDataInterval = 300000; // 5 min
-const unsigned int mainTimerInterval = 30000; // 30 seconds
+const int SameAppScreenShotInterval = 12; // minutes
+const int DefaultDataInterval = 300000; // 5 min
+const int mainTimerInterval = 30000; // 30 seconds
+const int idleThreshold = 600000; // 10 min
+const float sameWinDiffThreshold = 0.001;
+const int jpeg_quality = 25;
 #endif

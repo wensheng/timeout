@@ -91,6 +91,7 @@ private slots:
     void sendData();
     void uploadFile(const QFileInfo fi);
     void processWebServerReply(QNetworkReply *serverReply);
+    void quit();
 
     void on_confirmButton_clicked();
     void on_closeButton_clicked();
@@ -153,6 +154,9 @@ private:
     bool ddaInitialized;
     bool frameReleased;
     PTSettings pts;
+    uint64_t  lastSumBlue;
+    unsigned int lastJpgSize;
+    unsigned int sameWinCounter;
     //QSimpleUpdater *m_updater;
 };
 

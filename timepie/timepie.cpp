@@ -14,6 +14,7 @@
 #include "timepieeventfilter.h"
 #include "simplecrypt.h"
 #include "QSimpleUpdater.h"
+#include <cstdlib>
 #include <tuple>
 #include <fstream>
 #include <sstream>
@@ -61,6 +62,8 @@ TimePie::TimePie(QWidget *parent):
     lastScreenShotTime = 0;
     lastUploadTime = 0;
     lastInsertTimeStamp = 0;
+    lastSumBlue = 1;
+    sameWinCounter = 0;
     //m_updater = QSimpleUpdater::getInstance();
 
     /*
@@ -403,7 +406,7 @@ void TimePie::createTrayIcon()
     connect(monthReportAct, &QAction::triggered, this, [this]{ openReport(3); });
     connect(onlineReportAct, &QAction::triggered, this, [this]{ openReport(0); });
     connect(showHelp, &QAction::triggered, this, &TimePie::openHelpBrowser);
-    connect(quitAction, SIGNAL(triggered()), qApp, SLOT(quit()));
+    connect(quitAction, &QAction::triggered, this, &TimePie::quit);
     connect(settingsAction, &QAction::triggered, this, &TimePie::show);
     trayIcon->setContextMenu(trayIconMenu);
 //#endif
@@ -428,7 +431,7 @@ bool TimePie::generateRport(int reportType)
     QDateTime startDT;
     if(reportType == 1){
         context["reportType"] = QString("Today");
-        if(currentHour > pts.dayStartingHour){
+        if(currentHour >= pts.dayStartingHour){
             startDT = QDateTime(currentTime.date(),
                                 QTime(pts.dayStartingHour, 0));
         }else{
@@ -717,7 +720,6 @@ void TimePie::shootScreen()
     screenshotPath.append("\\shots");
     QScreen *screen = QGuiApplication::primaryScreen();
     QString fileName = QString("%1\\%2.jpg").arg(screenshotPath).arg(currentTime.toTime_t());
-    int img_quality = 25;  //default -1, 0:small compressed, 100:large uncompressed
 
     HWND iHwndForegroundWindow = GetForegroundWindow();
     if(!iHwndForegroundWindow){
@@ -750,34 +752,16 @@ void TimePie::shootScreen()
     }
     CloseHandle(handle);
     delete[] appName;
-    //qDebug()<<"name:"<<currentApplicationName.toUtf8().data();
 
-    if(currentApplicationName==lastApplicationName
-            && currentWindowTitle==lastWindowTitle){
-        //no change from previous app/title
-        if(pts.isContinuousMode == false){
-            return;
-        }
-        ULONGLONG currentTC = GetTickCount64() - lastScreenShotTime;
-        if(currentTC < pts.continuousModeInterval * 60000){
-            return;
-        }
-    }else{
+    ULONGLONG currentTC = GetTickCount64();
+    ULONGLONG tcSinceLastScreenshot = currentTC - lastScreenShotTime;
+    bool sameWindowForceScreenshot = false;
+    bool isSameWindow = false;
+
+    if(currentApplicationName!=lastApplicationName
+            || currentWindowTitle!=lastWindowTitle){
         QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
-        if(db.open()){
-            /*
-            QString sqlstr = QString("insert into entry values('%1','%2','%3','%4',%5)")
-                                     .arg(currentTime.toTime_t())
-                                     .arg(sessionUsername)
-                                     .arg(currentApplicationName)
-                                     .arg(currentWindowTitle)
-                                     .arg(1);
-            //qDebug()<<sqlstr.toUtf8().data();
-            odprintf("doing sqlite insert: %s", sqlstr.toUtf8().data());
-            QSqlQuery query = QSqlQuery(db);
-            bool ret = query.exec(sqlstr);
-            */
-
+        if(db.isOpen()){
             //int thisInsertId = 0;
             QSqlQuery query = QSqlQuery(db);
             query.prepare("INSERT INTO entry values(:timestamp, :username, :program, :wintitle, 1, 0)");
@@ -789,7 +773,7 @@ void TimePie::shootScreen()
                 odprintf(" -> db insert success");
                 //qDebug()<<query.lastInsertId().toInt() << query.lastError().text();
                 //thisInsertId = query.lastInsertId().toInt();
-                if(lastInsertTimeStamp){
+                if(lastInsertTimeStamp && sameWinCounter<20){
                     int duration =  currentTime.toSecsSinceEpoch() - lastInsertTimeStamp;
                     query.prepare("UPDATE entry SET duration = :duration WHERE timestamp = :timestamp");
                     query.bindValue(":duration", duration);
@@ -801,12 +785,26 @@ void TimePie::shootScreen()
             }else{
                 odprintf(" -> insert failed");
             }
-
             lastInsertTimeStamp = currentTime.toSecsSinceEpoch();
+        }
+        sameWinCounter = 0;
+    }else{
+        isSameWindow = true;
+        if(pts.isContinuousMode &&  tcSinceLastScreenshot >= pts.continuousModeInterval * 60000){
+            sameWindowForceScreenshot = true;
         }
     }
 
-    unsigned int fullscreenStatus = 0;
+    RECT rect;
+    if(GetWindowRect(iHwndForegroundWindow, &rect)){
+        odprintf("rect left, right, top, bottom = %d, %d, %d, %d",
+                 rect.left, rect.right, rect.top, rect.bottom);
+    }else{
+        odprintf("Could not GeteWindowRect");
+        return;
+    }
+
+    bool isFullScreen = false;
     QUERY_USER_NOTIFICATION_STATE pquns;
     SHQueryUserNotificationState(&pquns);
     // https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state
@@ -815,38 +813,33 @@ void TimePie::shootScreen()
     if(pquns == QUNS_RUNNING_D3D_FULL_SCREEN){
         // game such as: Minecraft, LOL
         odprintf("QUNS_RUNNING_D3D_FULL_SCREEN");
-        fullscreenStatus = 1;
-    }
+        isFullScreen = true;
+    }else{
+        MONITORINFO monitorInfo;
+        monitorInfo.cbSize = sizeof (MONITORINFO);
+        if(GetMonitorInfoW(MonitorFromWindow(iHwndForegroundWindow, MONITOR_DEFAULTTOPRIMARY), &monitorInfo)){
+            odprintf("monitor left, right, top, bottom = %d, %d, %d, %d",
+                     monitorInfo.rcMonitor.left,
+                     monitorInfo.rcMonitor.right,
+                     monitorInfo.rcMonitor.top,
+                     monitorInfo.rcMonitor.bottom);
+        }
 
-    RECT rect;
-    if(GetWindowRect(iHwndForegroundWindow, &rect)){
-        odprintf("rect left, right, top, bottom = %d, %d, %d, %d",
-                 rect.left, rect.right, rect.top, rect.bottom);
-
-    }
-    MONITORINFO monitorInfo;
-    monitorInfo.cbSize = sizeof (MONITORINFO);
-    if(GetMonitorInfoW(MonitorFromWindow(iHwndForegroundWindow, MONITOR_DEFAULTTOPRIMARY), &monitorInfo)){
-        odprintf("monitor left, right, top, bottom = %d, %d, %d, %d",
-                 monitorInfo.rcMonitor.left,
-                 monitorInfo.rcMonitor.right,
-                 monitorInfo.rcMonitor.top,
-                 monitorInfo.rcMonitor.bottom);
-    }
-
-    if(!fullscreenStatus && rect.right){
         if(rect.left == monitorInfo.rcMonitor.left
            && rect.right == monitorInfo.rcMonitor.right
            && rect.top == monitorInfo.rcMonitor.top
            && rect.bottom == monitorInfo.rcMonitor.bottom){
             // Roblox fullscreen etc.
             // if QUNS_BUSY is really fullscreen, status will be over-write to 3
-            fullscreenStatus = 2;
+            isFullScreen = true;
         }
     }
 
-    if(fullscreenStatus){
-        odprintf("fullscreen mode detected: %d", fullscreenStatus);
+    if(isFullScreen){
+        odprintf("fullscreen mode detected.");
+        if(isSameWindow && sameWindowForceScreenshot == false){
+            return;
+        }
         captureFullScreenDDA(fileName);
     }else{
         //https://doc.qt.io/archives/qt-4.8/qt-desktop-screenshot-screenshot-cpp.html
@@ -855,8 +848,8 @@ void TimePie::shootScreen()
             originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
                                                 rect.left,
                                                 rect.top,
-                                                rect.right - rect.left + 1,
-                                                rect.bottom - rect.top + 1);
+                                                rect.right - rect.left,
+                                                rect.bottom - rect.top);
 
         }else{
             //This works, but it only grab the pane, not window,
@@ -865,11 +858,54 @@ void TimePie::shootScreen()
         }
 
         if (!originalPixmap.isNull()){
-            originalPixmap.save(fileName, "jpg", img_quality);
+            // 128 size to reduce calculations
+            int scaleHeight = originalPixmap.height() < 128? originalPixmap.height(): 128;
+            QImage img = originalPixmap.scaledToHeight(scaleHeight).toImage();
+            // colorCount, colorTable, colorspace are empty for this kind of image
+            // sizeInBytes will be the same for same sizes
+            // img format is 4 - QImage::Format_RGB32
+            QRgb *bits = (QRgb*)img.constBits();
+            uint64_t sumBlue=0;
+            for(int i=0; i< img.height()*img.width(); i++){
+                sumBlue += (int)qBlue(bits[i]);
+            }
+            float difference = std::abs(sumBlue - (float)lastSumBlue) / lastSumBlue;
+            odprintf("sumBlue=%ld, lastSumBlue=%ld, blue difference=%f", sumBlue, lastSumBlue, difference);
+
+            // detect idle
+            if(isSameWindow){
+                if(difference < sameWinDiffThreshold){
+                    sameWinCounter++;
+                    if(sameWinCounter==20){
+                        // 20 x mainTimer = 600 seconds = 10 mins
+                        QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
+                        if(db.isOpen()){
+                            QSqlQuery query = QSqlQuery(db);
+                            if(lastInsertTimeStamp){
+                                int duration =  currentTime.toSecsSinceEpoch() - lastInsertTimeStamp;
+                                query.prepare("UPDATE entry SET duration = :duration WHERE timestamp = :timestamp");
+                                query.bindValue(":duration", duration);
+                                query.bindValue(":timestamp", lastInsertTimeStamp);
+                                if(!query.exec()){
+                                    odprintf("Failed to update last duration.\nError:%s", query.lastError().text().toStdString().c_str());
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }else if(sameWindowForceScreenshot==false){
+                    return;
+                }
+            }
+
+            originalPixmap.save(fileName, "jpg", jpeg_quality);
             //save half size
             //originalPixmap.scaledToHeight(originalPixmap.height()/2).save(fileName, format.toAscii(), img_quality);
+            lastSumBlue = sumBlue;
         }
     }
+
+    // TODO: this is wrong, should move to upload data
     if(pts.keepLocalCopies){
         if(!pts.screenshotSaveDir.isEmpty()){
             QDir copyDir = QDir(pts.screenshotSaveDir);
@@ -887,7 +923,7 @@ void TimePie::shootScreen()
         }
     }
 
-    lastScreenShotTime = GetTickCount64();
+    lastScreenShotTime = currentTC;
     lastWindowTitle = currentWindowTitle;
     lastApplicationName = currentApplicationName;
 }
@@ -1002,6 +1038,24 @@ void TimePie::uploadFile(const QFileInfo fi){
     request.setRawHeader(QString("Content-Type").toLatin1(), QString("multipart/form-data; boundary=" + boundary).toLatin1());
     request.setRawHeader(QString("Content-Length").toLatin1(), QString::number(datas.length()).toLatin1());
     netManager->post(request,datas);
+}
+
+void TimePie::quit()
+{
+    QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
+    if(db.isOpen()){
+        QSqlQuery query = QSqlQuery(db);
+        if(lastInsertTimeStamp){
+            int duration =  QDateTime::currentDateTime().toSecsSinceEpoch() - lastInsertTimeStamp;
+            query.prepare("UPDATE entry SET duration = :duration WHERE timestamp = :timestamp");
+            query.bindValue(":duration", duration);
+            query.bindValue(":timestamp", lastInsertTimeStamp);
+            if(!query.exec()){
+                odprintf("Failed to update last duration.\nError:%s", query.lastError().text().toStdString().c_str());
+            }
+        }
+    }
+    QApplication::instance()->quit();
 }
 
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
