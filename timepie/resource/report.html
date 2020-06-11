@@ -136,7 +136,7 @@
 
   {{#stats}}
    chart_option.legend.data.push("{{name}}");
-   chart_option.series[0].data.push({"name": "{{name}}", "value": {{duration}} });
+   chart_option.series[0].data.push({name: "{{name}}", value: {{duration}} });
   {{/stats}}
 
   chart.setOption(chart_option);

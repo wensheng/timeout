@@ -40,6 +40,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSettings>
+#ifdef Q_OS_WIN
 #include <wrl.h>
 #include <sdkddkver.h>
 //#define _WIN32_WINNT _WIN32_WINNT_WIN7
@@ -48,6 +49,7 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 //#include <dxgi1_5.h>
+#endif
 #include <lm.h>
 namespace Ui {
     class TMController;

@@ -5,7 +5,6 @@
 #include <QWidget>
 #include <QDebug>
 #include "timepie.h"
-//#include <Windows.h>
 #include "windows.h"
 
 class TimePieEventFilter: public QAbstractNativeEventFilter

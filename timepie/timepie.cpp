@@ -331,7 +331,7 @@ void TimePie::initData()
                                  "pname text,"
                                  "title text,"
                                  "forget integer,"
-                                 "duration integer)");
+                                 "duration integer DEFAULT 0)");
         QSqlQuery query = QSqlQuery(sqlstr,db);
         query.exec();
         //qDebug()<< db.tables();
@@ -488,6 +488,7 @@ bool TimePie::generateRport(int reportType)
         QString te1 = query.value(1).toString();
         int te2, te3;
         te2 = query.value(2).toInt();
+        /*
         if(query.value(3).toInt()){
             te3 = query.value(3).toInt();
         }else{
@@ -495,7 +496,8 @@ bool TimePie::generateRport(int reportType)
             // or the record just before exiting the program
             //te3 = currentTime.toSecsSinceEpoch() - query.value(2).toInt(); // this is wrong
             te3 = 0;
-        }
+        }*/
+        te3 = query.value(3).toInt();
         records.append(std::make_tuple(te0, te1, te2, te3));
     }
 
@@ -545,8 +547,8 @@ bool TimePie::generateRport(int reportType)
         if(appCount<10){
             QVariantHash rhash;
             rhash["name"] = slist.last();
-            rhash["duration"] = s.second;
-            rhash["minutes"] = ceil(s.second / 60.0);
+            rhash["duration"] = QString::number(s.second);
+            rhash["minutes"] = QString::number(ceil(s.second / 60.0));
             if(s.second>=3600){
                 rhash["minutes"] = rhash["minutes"].toString() + " (" + QString::number(s.second/3600.0, 'f', 1) + " hours)";
             }
@@ -559,8 +561,8 @@ bool TimePie::generateRport(int reportType)
     if(othersDuration){
         QVariantHash rhash;
         rhash["name"] = "Others";
-        rhash["duration"] = othersDuration;
-        rhash["minutes"] = ceil(othersDuration / 60.0);
+        rhash["duration"] = QString::number(othersDuration);
+        rhash["minutes"] = QString::number(ceil(othersDuration / 60.0));
         if(othersDuration >= 3600){
             rhash["minutes"] = rhash["minutes"].toString() + " (" + QString::number(othersDuration/3600.0, 'f', 1) + " hours)";
         }
@@ -877,6 +879,7 @@ void TimePie::shootScreen()
                 if(difference < sameWinDiffThreshold){
                     sameWinCounter++;
                     if(sameWinCounter==20){
+                        odprintf("Idle state detected now:%s.", currentTime.toString("MM-dd hh:mm").toStdString().c_str());
                         // 20 x mainTimer = 600 seconds = 10 mins
                         QSqlDatabase db = QSqlDatabase::database(DATABASE_NAME);
                         if(db.isOpen()){
@@ -894,6 +897,7 @@ void TimePie::shootScreen()
                     }
                     return;
                 }else if(sameWindowForceScreenshot==false){
+                    lastSumBlue = sumBlue;
                     return;
                 }
             }
