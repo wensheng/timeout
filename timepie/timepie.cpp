@@ -19,25 +19,31 @@
 #include <fstream>
 #include <sstream>
 #include <odprint.h>
-#include <psapi.h> //for GetModuleFileNameEx
-#include <WtsApi32.h> // for WTSRegisterSessionNotification
 #include <QFileDialog>
 #include <QSet>
 #include <QSqlError>
 
-#include <wincodec.h>
-#include <Wingdi.h>
-//#include <d3d11.h>
-//#include <dxgi.h>
-#include <KnownFolders.h>
-#include <shellapi.h>
+#ifdef Q_OS_WIN
+#include <psapi.h> //for GetModuleFileNameEx
+#include <WtsApi32.h> // for WTSRegisterSessionNotification
+#include <wincodec.h> // IWICImagingFactory
+#include <d3d11_1.h>  // consistent with WICTextureLoader.h
+#include <dxgi1_2.h>
+//#include <Wingdi.h>
+//#include <KnownFolders.h>
+//#include <shellapi.h>
 #include <system_error>
-#include <ScreenGrab.h>
+//#include <ScreenGrab.h>
 #include <WICTextureLoader.h>
+#include <lm.h> // to determin isAdmin on windows
+#include <wrl.h>
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
-
+//#include <sdkddkver.h>
+//#include <windows.h>
+//#include <tchar.h>
 using namespace Microsoft::WRL;
+
 using namespace DirectX;
 
 namespace DirectX
@@ -45,6 +51,7 @@ namespace DirectX
     extern bool _IsWIC2() noexcept;
     extern IWICImagingFactory* _GetWIC() noexcept;
 }
+#endif
 
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);

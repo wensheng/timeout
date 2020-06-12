@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <ctype.h>
-#include <windows.h>
+#include <Windows.h>
+//#include <windows.h>
 
 /* from: http://unixwiz.net/techtips/outputdebugstring.html */
 void __cdecl odprintf(const char *format, ...)
