@@ -4,18 +4,23 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <ctype.h>
+#ifdef Q_OS_WIN
 #include <Windows.h>
-//#include <windows.h>
+#else
+#include <syslog.h>
+#endif
 
-/* from: http://unixwiz.net/techtips/outputdebugstring.html */
-void __cdecl odprintf(const char *format, ...)
+void odprintf(const char *format, ...)
 {
 #ifdef QT_NO_DEBUG
     return;
 #endif
+    va_list args;
+
+#ifdef Q_OS_WIN
+    /* from: http://unixwiz.net/techtips/outputdebugstring.html */
     char    buf[4096], *p = buf;
     wchar_t ws[2048];
-    va_list args;
     int     n;
 
     va_start(args, format);
@@ -33,5 +38,8 @@ void __cdecl odprintf(const char *format, ...)
 
     swprintf(ws, 2048, L"%hs", buf);
     OutputDebugString(ws);
+#else
+    syslog(LOG_INFO, format, args);
+#endif
 }
 #endif // ODPRINT_H

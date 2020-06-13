@@ -4,3 +4,6 @@
 [submodule "timepie/3rdParty/QSimpleUpdater"]
 	path = timepie/3rdParty/QSimpleUpdater
 	url = https://github.com/alex-spataru/QSimpleUpdater.git
+[submodule "3rdParty/QSimpleUpdater"]
+	path = 3rdParty/QSimpleUpdater
+	url = https://github.com/alex-spataru/QSimpleUpdater.git
