@@ -1,6 +1,6 @@
 QT +=  core gui widgets sql network
 
-include ($$PWD/3rdParty/QSimpleUpdater/QSimpleUpdater.pri)
+include ($$PWD/../3rdParty/QSimpleUpdater/QSimpleUpdater.pri)
 
 SOURCES += main.cpp \
 	timepie.cpp \
