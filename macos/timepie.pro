@@ -19,3 +19,5 @@ LIBS += -framework ApplicationServices
 FORMS += \
     dialog.ui
 
+QMAKE_INFO_PLIST = resource/Info.plist
+

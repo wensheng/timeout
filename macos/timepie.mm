@@ -75,7 +75,11 @@ TimePie::TimePie(QWidget *parent):
     lastInsertTimeStamp = 0;
     lastSumBlue = 1;
     sameWinCounter = 0;
-    //m_updater = QSimpleUpdater::getInstance();
+    // this will prevent timepie from getting focus, but it has dock icon
+    // for that we need to put LSUIElement=1 in Info.plist
+    qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "true");
+    QString appPath = QApplication::applicationFilePath();
+    NSLog(@"app Path=%s", appPath.toStdString().c_str());
 
     /*
      * session username
@@ -87,7 +91,7 @@ TimePie::TimePie(QWidget *parent):
      */
     //QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     //progDataDir = env.value("ALLUSERSPROFILE");
-    //progDataDir.append("\\TimePie");
+    //progDataDir.append("/TimePie");
     progDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir dir = QDir(progDataDir);
     NSLog(@"appdata =:%s", dir.absolutePath().toStdString().c_str());
@@ -109,7 +113,7 @@ TimePie::TimePie(QWidget *parent):
     /*
      * write process id to file, filename is b64encoded username + ".pid"
      */
-    QString pidFilePath = QString("%1\\%2.pid").arg(progDataDir).arg(b64Username);
+    QString pidFilePath = QString("%1/%2.pid").arg(progDataDir).arg(b64Username);
     pid_t pid = getpid();
     std::ofstream pidFile;
     pidFile.open(pidFilePath.toStdString().c_str(), std::ofstream::out);
@@ -123,7 +127,7 @@ TimePie::TimePie(QWidget *parent):
      * so no logfile in release
      */
 #ifdef QT_DEBUG
-    QString logpath = QString("%1\\%2_tm.log").arg(progDataDir).arg(b64Username);
+    QString logpath = QString("%1/%2_tm.log").arg(progDataDir).arg(b64Username);
     timepie_logfile.open(logpath.toStdString().c_str(), std::fstream::app);
     // if we have DebugView from sysinternal running, the program can not open output and won't start
     // so don't use DebugView in Debug
@@ -281,6 +285,41 @@ TimePie::TimePie(QWidget *parent):
                                                                 usingBlock:^(NSNotification *note) {
         NSLog(@"New application: %@", [[note userInfo] objectForKey:NSWorkspaceApplicationKey]);
     }];*/
+    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screenIsLocked"
+                                                                 object:nil
+                                                                 queue:nil
+                                                            usingBlock:^(NSNotification *note){
+        NSLog(@"screen is locked: %@", [note userInfo]);
+        toggleTimers(true);
+    }];
+    //when screensave is turned on, screenIsLocked also received, so this is redandunt
+    // but same is not true for screenIsUnLocked
+    /*
+    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screensaver.didstart"
+                                                                 object:nil
+                                                                 queue:nil
+                                                            usingBlock:^(NSNotification *note){
+        Q_UNUSED(note);
+        NSLog(@"screensaver is on");
+        toggleTimers(true);
+    }];*/
+
+    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screenIsUnLocked"
+                                                                 object:nil
+                                                                 queue:nil
+                                                            usingBlock:^(NSNotification *note){
+        Q_UNUSED(note);
+        NSLog(@"screensaver is unlocked");
+        toggleTimers(false);
+    }];
+    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screensaver.didstop"
+                                                                 object:nil
+                                                                 queue:nil
+                                                            usingBlock:^(NSNotification *note){
+        Q_UNUSED(note);
+        NSLog(@"screensaver is off");
+        toggleTimers(false);
+    }];
 }
 
 TimePie::~TimePie()
@@ -687,7 +726,7 @@ void TimePie::processWebServerReply(QNetworkReply *serverReply)
         }
         //odprintf("file: %s was saved on remote server", jsonObj["file"].toString().constData());
         odprintf("file: %s was saved on remote server", jsonObj["file"].toString().toStdString().c_str());
-        //QString fileName = QString("%1\\%2.jpg").arg(appDataDir).arg(jsonObj["file"].toString());
+        //QString fileName = QString("%1/%2.jpg").arg(appDataDir).arg(jsonObj["file"].toString());
         //if(QFileInfo::exists(fileName)){
         //    QFile::remove(fileName);
         //}
