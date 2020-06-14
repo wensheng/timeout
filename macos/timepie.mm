@@ -57,6 +57,7 @@ namespace DirectX
 }
 #endif
 
+
 std::ofstream timepie_logfile;
 void TimepieLoggingHandler(QtMsgType type, const QMessageLogContext &, const QString &msg);
 
@@ -89,9 +90,13 @@ TimePie::TimePie(QWidget *parent):
     //progDataDir.append("\\TimePie");
     progDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir dir = QDir(progDataDir);
+    NSLog(@"appdata =:%s", dir.absolutePath().toStdString().c_str());
     if(!dir.exists()){
-        dir.mkpath(".");
+        if(!dir.mkpath(".")){
+            NSLog(@"could not create appdata directory:%s", dir.absolutePath().toStdString().c_str());
+        }
     }
+    // TODO: move asking permission here: screenshot and control
 
     /*
      * session username base64 encoded
@@ -731,52 +736,136 @@ void TimePie::shootScreen()
     QString currentApplicationName=QString();
     QString currentWindowTitle=QString();
     QString screenshotPath = QString(progDataDir);
-    screenshotPath.append("\\shots");
+    screenshotPath.append("/shots");
     QScreen *screen = QGuiApplication::primaryScreen();
-    QString fileName = QString("%1\\%2.jpg").arg(screenshotPath).arg(currentTime.toTime_t());
+    QString fileName = QString("%1/%2.jpg").arg(screenshotPath).arg(currentTime.toTime_t());
 
     NSRunningApplication *topMostApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
     struct timespec monotime;
     clock_gettime(CLOCK_MONOTONIC, &monotime);
     time_t currentTC = monotime.tv_sec;
     //odprintf("Current TC:%ld, current App:%s", (long)currentTC, )
-    NSLog(@"top most: %@", topMostApp.bundleIdentifier);
+    NSLog(@"localizedName: %@", topMostApp.localizedName);
+    //pid_t topMostPid = topMostApp.processIdentifier;
+    NSLog(@"processIdentifier: %d", topMostApp.processIdentifier);
+    //https://stackoverflow.com/questions/480866/get-the-title-of-the-current-active-window-document-in-mac-os-x
+    NSDictionary *options = @{(id)kAXTrustedCheckOptionPrompt: @YES};
+    Boolean appHasPermission = AXIsProcessTrustedWithOptions(
+                                 (__bridge CFDictionaryRef)options);
+    if (!appHasPermission) {
+       return; // we don't have accessibility permissions
+    }
+
+    // Get the accessibility element corresponding to the frontmost application.
+    AXUIElementRef appElem = AXUIElementCreateApplication(topMostApp.processIdentifier);
+    if (!appElem) {
+      return;
+    }
+    // Get the accessibility element corresponding to the frontmost window
+    // of the frontmost application.
+    AXUIElementRef winRef = NULL;
+    if (AXUIElementCopyAttributeValue(appElem,
+          kAXFocusedWindowAttribute, (CFTypeRef*)&winRef) != kAXErrorSuccess) {
+      CFRelease(appElem);
+      return;
+    }
+
+    // Finally, get the title of the frontmost window.
+    CFStringRef titleRef = NULL;
+    AXError result = AXUIElementCopyAttributeValue(winRef, kAXTitleAttribute,
+                       (CFTypeRef*)&titleRef);
+
+    // At this point, we don't need window and appElem anymore.
+    CFRelease(winRef);
+    CFRelease(appElem);
+
+    if (result != kAXErrorSuccess) {
+      // Failed to get the window title.
+      return;
+    }
+
+    CFStringEncoding sysEncoding = CFStringGetSystemEncoding();
+    char  *appTitle = (char*)CFStringGetCStringPtr(titleRef, sysEncoding);
+    if(appTitle == NULL){
+        appTitle = (char*) CFStringGetCStringPtr(titleRef, kCFStringEncodingUTF8);
+    }
+    NSLog(@"title:%s", appTitle);
+
+
+    /*
+     *  use processIdentifier to find windowNumber:CGWindowId
+     */
+    CGWindowID iHwndForegroundWindow = 0;
+    CFArrayRef windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    CFIndex windowListCount = CFArrayGetCount(windowList);
+    for(int i=0; i<windowListCount; i++){
+        CFDictionaryRef dictRef = (CFDictionaryRef)CFArrayGetValueAtIndex(windowList, i);
+        CFNumberRef idRef = (CFNumberRef) CFDictionaryGetValue(dictRef, kCGWindowOwnerPID);
+        pid_t ownerID = 0;
+        CFNumberGetValue(idRef, kCFNumberSInt32Type, &ownerID);
+        //NSLog(@"pid:%d", ownerID);
+        if(ownerID == topMostApp.processIdentifier){
+            NSLog(@"found it");
+            CFNumberRef idRef2 = (CFNumberRef) CFDictionaryGetValue(dictRef, kCGWindowNumber);
+            CFNumberGetValue(idRef2, kCFNumberSInt32Type, &iHwndForegroundWindow);
+            break;
+        }
+        CFRelease(dictRef);
+    }
+    NSLog(@"appWinID: %d", iHwndForegroundWindow);
 
 #if 0
-    HWND iHwndForegroundWindow = GetForegroundWindow();
-    if(!iHwndForegroundWindow){
-        odprintf("Could not get foreground window");
-        return;
+    // from webrtc modules/desktop_capture/mac/full_screen_chrome_window_detector.cc
+    CFArrayRef window_id_array = CFArrayCreate(NULL, reinterpret_cast<const void **>(&iHwndForegroundWindow), 1, NULL);
+    CFArrayRef window_array = CGWindowListCreateDescriptionFromArray(window_id_array);
+    if(window_array && CFArrayGetCount(window_array)){
+        CFDictionaryRef dictRef = reinterpret_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(window_array, 0));
+        CFStringRef titleRef = reinterpret_cast<CFStringRef>(CFDictionaryGetValue(dictRef, kCGWindowName));
+        CFStringEncoding encoding = CFStringGetSystemEncoding();
+        const char *winTitle = CFStringGetCStringPtr(titleRef, encoding);
+        NSLog(@"title?:%s", winTitle);
     }
 
-    //Get active window title,
-    //if active window is a browser, it will be html doc title
-    LPTSTR appTitle = new TCHAR[1023];
-    GetWindowText(iHwndForegroundWindow, appTitle, 1024);
+    /*
+    QString aScript("global frontApp, frontAppName, windowTitle\n"
+            "set windowTitle to quot;quot;\n"
+            "tell application quot;System Eventsquot;\n"
+            "  set frontApp to first application process whose frontmost is true\n"
+            "  set frontAppName to name of frontApp\n"
+            "  set windowTitle to quot;no windowquot;\n"
+            "  tell process frontAppName\n"
+            "    if exists (1st window whose value of attribute quot;AXMainquot; is true) then\n"
+            "      tell (1st window whose value of attribute quot;AXMainquot; is true)\n"
+            "        set windowTitle to value of attribute quot;AXTitlequot;\n"
+            "      end tell\n"
+            "    end if\n"
+            "  end tell\n"
+            "end tell\n"
+            "return windowTitle");
+
+    QString osascript = "/usr/bin/osascript";
+    QStringList processArguments;
+    processArguments << "-l" << "AppleScript";
+    QProcess qP;
+    qP.start(osascript, processArguments);
+    qP.write(aScript.toUtf8());
+    qP.closeWriteChannel();
+    qP.waitForReadyRead(-1);
+    QByteArray asResult = qP.readAll();
+    QString asResultStr(asResult);
+    NSLog(@"title: %@", asResultStr.toNSString());
+    */
+#endif
+
     if(appTitle!=NULL){
-        currentWindowTitle = QString::fromUtf16( (ushort*)appTitle );
+        currentWindowTitle = QString(appTitle);
     }
-    odprintf("foregroundWindow: %s",  currentWindowTitle.toStdString().c_str());
+    //odprintf("foregroundWindow: %s",  currentWindowTitle.toStdString().c_str());
+    odprintf("foregroundWindow: %s",  appTitle);
 
-    //Get active window application filename
-    //e.g. if active window is firefox, it will be "firefox.exe"
-    TCHAR *appName = new TCHAR[512];  // for GetModuleFileNameExW
-    DWORD procId=0;
-    GetWindowThreadProcessId(iHwndForegroundWindow,&procId);
+    currentApplicationName = QString([topMostApp.localizedName UTF8String]);
 
-    HANDLE handle = OpenProcess(1040, 0, procId);
-    //PROCESS_QUERY_INFORMATION(0x400)|PROCESS_VM_READ(0x10)=0x410=1040
-
-    if(handle){
-        if(::GetModuleFileNameExW(handle,NULL,appName,512)){
-            currentApplicationName = QString::fromUtf16( (ushort*)appName );
-        }
-    }
-    CloseHandle(handle);
-    delete[] appName;
-
-    ULONGLONG currentTC = GetTickCount64();
-    ULONGLONG tcSinceLastScreenshot = currentTC - lastScreenShotTime;
+    time_t tcSinceLastScreenshot = currentTC - lastScreenShotTime;
     bool sameWindowForceScreenshot = false;
     bool isSameWindow = false;
 
@@ -812,11 +901,13 @@ void TimePie::shootScreen()
         sameWinCounter = 0;
     }else{
         isSameWindow = true;
-        if(pts.isContinuousMode &&  tcSinceLastScreenshot >= pts.continuousModeInterval * 60000){
+        if(pts.isContinuousMode &&  tcSinceLastScreenshot >= pts.continuousModeInterval * 60){
             sameWindowForceScreenshot = true;
         }
     }
 
+    bool isFullScreen = false;
+#if 0
     RECT rect;
     if(GetWindowRect(iHwndForegroundWindow, &rect)){
         odprintf("rect left, right, top, bottom = %d, %d, %d, %d",
@@ -826,7 +917,6 @@ void TimePie::shootScreen()
         return;
     }
 
-    bool isFullScreen = false;
     QUERY_USER_NOTIFICATION_STATE pquns;
     SHQueryUserNotificationState(&pquns);
     // https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state
@@ -857,15 +947,18 @@ void TimePie::shootScreen()
         }
     }
 
+#endif
+
     if(isFullScreen){
         odprintf("fullscreen mode detected.");
         if(isSameWindow && sameWindowForceScreenshot == false){
             return;
         }
-        captureFullScreenDDA(fileName);
+        //captureFullScreenDDA(fileName);
     }else{
         //https://doc.qt.io/archives/qt-4.8/qt-desktop-screenshot-screenshot-cpp.html
         QPixmap originalPixmap = QPixmap();
+        /*
         if(rect.right){
             originalPixmap = screen->grabWindow(QApplication::desktop()->winId(),
                                                 rect.left,
@@ -877,7 +970,8 @@ void TimePie::shootScreen()
             //This works, but it only grab the pane, not window,
             //i.e. no outer frame, not menu, status.
             originalPixmap = screen->grabWindow((WId)iHwndForegroundWindow);
-        }
+        }*/
+        originalPixmap = screen->grabWindow((WId)iHwndForegroundWindow);
 
         if (!originalPixmap.isNull()){
             // 128 size to reduce calculations
@@ -946,7 +1040,6 @@ void TimePie::shootScreen()
             }
         }
     }
-#endif
 
     lastScreenShotTime = currentTC;
     lastWindowTitle = currentWindowTitle;
@@ -1001,7 +1094,7 @@ void TimePie::sendData()
         netManager->post(req, json.toJson());
     }
 
-    QDir dir(progDataDir + "\\shots");
+    QDir dir(progDataDir + "/shots");
     dir.setFilter(QDir::Files|QDir::NoSymLinks);
     const QFileInfoList fileInfoList = dir.entryInfoList();
     int delay = 0;

@@ -7,3 +7,4 @@ debug/
 Makefile*
 .qmake.stash
 ui_dialog.h
+.DS_Store
