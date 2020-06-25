@@ -76,9 +76,10 @@ TimePie::TimePie(QWidget *parent):
     lastSumBlue = 1;
     sameWinCounter = 0;
     screenStatus = PTSS_OK;
-    // this will prevent timepie from getting focus, but it has dock icon
+    // this will prevent timepie from getting focus, but it has dock icown
+    // this is not what we want because we need settings windows to be shown when user click "setttings"
     // for that we need to put LSUIElement=1 in Info.plist
-    qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "true");
+    //qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "true");
     QString appPath = QApplication::applicationFilePath();
     NSLog(@"app Path=%s", appPath.toStdString().c_str());
 
