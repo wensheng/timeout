@@ -75,6 +75,7 @@ TimePie::TimePie(QWidget *parent):
     lastInsertTimeStamp = 0;
     lastSumBlue = 1;
     sameWinCounter = 0;
+    screenStatus = PTSS_OK;
     // this will prevent timepie from getting focus, but it has dock icon
     // for that we need to put LSUIElement=1 in Info.plist
     qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "true");
@@ -285,31 +286,51 @@ TimePie::TimePie(QWidget *parent):
                                                                 usingBlock:^(NSNotification *note) {
         NSLog(@"New application: %@", [[note userInfo] objectForKey:NSWorkspaceApplicationKey]);
     }];*/
+
+    /*
+     * Lock/unlock are straight forward.
+     * sleep/unsleep are the same as lock/unlock.
+     * when screensaver is off, only screensaver.didstop received
+     * But,
+     * When screensaver is on, these notifications are received:
+     * screensaver.didstart, screenIsLocked, screensaver.didstart
+     * When it goest from screensaver to locked:
+     * screenIsLocked, screensaver.didstop, screensaver.didstop
+     */
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screenIsLocked"
                                                                  object:nil
                                                                  queue:nil
                                                             usingBlock:^(NSNotification *note){
-        NSLog(@"screen is locked: %@", [note userInfo]);
-        toggleTimers(true);
+        Q_UNUSED(note);
+        if(screenStatus == PTSS_OK){
+            NSLog(@"screen is locked, stopping timers.");
+            toggleTimers(true);
+        }else if(screenStatus == PTSS_SSON){
+            NSLog(@"locked received while in screensaver, do nothing");
+        }
+        screenStatus = PTSS_LOCKED;
     }];
-    //when screensave is turned on, screenIsLocked also received, so this is redandunt
+    //when screensave is turned on, screenIsLocked also received, so this is redanduntk
     // but same is not true for screenIsUnLocked
-    /*
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screensaver.didstart"
                                                                  object:nil
                                                                  queue:nil
                                                             usingBlock:^(NSNotification *note){
         Q_UNUSED(note);
-        NSLog(@"screensaver is on");
-        toggleTimers(true);
-    }];*/
+        if(screenStatus == PTSS_OK){
+            NSLog(@"screensaver is on, stopping timers.");
+            toggleTimers(true);
+            screenStatus = PTSS_SSON;
+        }
+    }];
 
-    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screenIsUnLocked"
+    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screenIsUnlocked"
                                                                  object:nil
                                                                  queue:nil
                                                             usingBlock:^(NSNotification *note){
         Q_UNUSED(note);
-        NSLog(@"screensaver is unlocked");
+        screenStatus = PTSS_OK;
+        NSLog(@"screen is unlocked, starting timers");
         toggleTimers(false);
     }];
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.apple.screensaver.didstop"
@@ -317,8 +338,11 @@ TimePie::TimePie(QWidget *parent):
                                                                  queue:nil
                                                             usingBlock:^(NSNotification *note){
         Q_UNUSED(note);
-        NSLog(@"screensaver is off");
-        toggleTimers(false);
+        if(screenStatus == PTSS_SSON){
+            toggleTimers(false);
+            NSLog(@"screensaver off, starting timers");
+            screenStatus = PTSS_OK;
+        }
     }];
 }
 

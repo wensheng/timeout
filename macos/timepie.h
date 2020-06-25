@@ -58,6 +58,13 @@ struct PTSettings{
     QString computerName;
 };
 
+enum PTScreenStatus {
+    PTSS_OK,
+    PTSS_SLEEP,
+    PTSS_SSON,
+    PTSS_LOCKED
+};
+
 //! [0]
 class TimePie : public QDialog
 {
@@ -149,6 +156,7 @@ private:
     unsigned int lastJpgSize;
     unsigned int sameWinCounter;
     //QSimpleUpdater *m_updater;
+    PTScreenStatus screenStatus;
 };
 
 //! [0]
